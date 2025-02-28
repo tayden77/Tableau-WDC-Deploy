@@ -22,14 +22,32 @@
                 alert("Already authenticated.");
             }
         });
-    });
+      });
 
       // Get Data button triggers the WDC flow
       $("#getDataButton").click(function() {
           tableau.connectionName = "Blackbaud RE NXT Connector (Server-Side OAuth)";
           tableau.submit();
       });
+
+      // Get API call parameters from frontend User selection
+      $("#submitButton").click(function() {
+        const endpoint = $("#endpointSelect").val();
+        const pageLimit = $("#pageLimit").val();
+        const startDate = $("#startDate").val();
+
+        // Build an object for your use
+        const configObj = { endpoint, pageLimit, startDate };
+
+        // Convert to string
+        tableau.connectionData = JSON.stringify(configObj);
+
+        tableau.connectionName = "Blackbaud Data";
+        tableau.submit();
+      });
+
     });
+
 
     // UI update helper
     function updateUIWithAuthState(hasAuth) {
