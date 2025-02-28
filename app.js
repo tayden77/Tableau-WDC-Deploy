@@ -256,10 +256,10 @@ app.get('/getConstituents', function(req, res) {
 });
 
 // 5) Paramaterized Data Route: Get parameterized API call data from frontend user input
-app.get('/getBlackbaudData', (req, res) => {
-  const endpoint = req.query.endpoint;
-  const pageLimit = req.query.pageLimit;
-});
+// app.get('/getBlackbaudData', (req, res) => {
+//   const endpoint = req.query.endpoint;
+//   const pageLimit = req.query.pageLimit;
+// });
 
 // -------------------------------------------------- //
 // Create and start our server
