@@ -1,4 +1,67 @@
 (function() {
+
+  const SCHEMA_MAP = {
+    constituents: [
+      { id: "id", dataType: tableau.dataTypeEnum.string },
+      { id: "address", dataType: tableau.dataTypeEnum.string },
+      { id: "age", dataType: tableau.dataTypeEnum.int },
+      { id: "birthdate", dataType: tableau.dataTypeEnum.date },
+      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+      { id: "deceased", dataType: tableau.dataTypeEnum.bool },
+      { id: "deceased_date", dataType: tableau.dataTypeEnum.date },
+      { id: "email", dataType: tableau.dataTypeEnum.string },
+      { id: "first", dataType: tableau.dataTypeEnum.string },
+      { id: "former_name", dataType: tableau.dataTypeEnum.string },
+      { id: "fundraiser_status", dataType: tableau.dataTypeEnum.string },
+      { id: "gender", dataType: tableau.dataTypeEnum.string },
+      { id: "gives_anonymously", dataType: tableau.dataTypeEnum.bool },
+      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+      { id: "last", dataType: tableau.dataTypeEnum.string },
+      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+      { id: "marital_status", dataType: tableau.dataTypeEnum.string },
+      { id: "middle", dataType: tableau.dataTypeEnum.string },
+      { id: "name", dataType: tableau.dataTypeEnum.string },
+      { id: "online_presence", dataType: tableau.dataTypeEnum.string },
+      { id: "phone", dataType: tableau.dataTypeEnum.string },
+      { id: "preferred_name", dataType: tableau.dataTypeEnum.string },
+      { id: "spouse", dataType: tableau.dataTypeEnum.string },
+      { id: "suffix", dataType: tableau.dataTypeEnum.string },
+      { id: "suffix_2", dataType: tableau.dataTypeEnum.string },
+      { id: "title", dataType: tableau.dataTypeEnum.string },
+      { id: "title_2", dataType: tableau.dataTypeEnum.string },
+      { id: "type", dataType: tableau.dataTypeEnum.string },
+      { id: "birthplace", dataType: tableau.dataTypeEnum.string },
+      { id: "ethnicity", dataType: tableau.dataTypeEnum.string },
+      { id: "income", dataType: tableau.dataTypeEnum.string },
+      { id: "religion", dataType: tableau.dataTypeEnum.string },
+      { id: "industry", dataType: tableau.dataTypeEnum.string },
+      { id: "matches_gifts", dataType: tableau.dataTypeEnum.bool },
+      { id: "matching_gift_per_gift_min", dataType: tableau.dataTypeEnum.float },
+      { id: "matching_gift_per_gift_max", dataType: tableau.dataTypeEnum.float },
+      { id: "matching_gift_total_min", dataType: tableau.dataTypeEnum.float },
+      { id: "matching_gift_total_max", dataType: tableau.dataTypeEnum.float },
+      { id: "matching_gift_factor", dataType: tableau.dataTypeEnum.float },
+      { id: "matching_gift_notes", dataType: tableau.dataTypeEnum.string },
+      { id: "num_employees", dataType: tableau.dataTypeEnum.int },
+      { id: "is_memorial", dataType: tableau.dataTypeEnum.bool },
+      { id: "is_solicitor", dataType: tableau.dataTypeEnum.bool },
+      { id: "no_valid_address", dataType: tableau.dataTypeEnum.bool },
+      { id: "receipt_type", dataType: tableau.dataTypeEnum.string },
+      { id: "target", dataType: tableau.dataTypeEnum.string },
+      { id: "requests_no_email", dataType: tableau.dataTypeEnum.bool },
+      { id: "import_id", dataType: tableau.dataTypeEnum.string },
+      { id: "is_constituent", dataType: tableau.dataTypeEnum.bool },
+      { id: "num_subsidiaries", dataType: tableau.dataTypeEnum.int },
+      { id: "parent_corporation_name", dataType: tableau.dataTypeEnum.string },
+      { id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
+      ],
+      gifts: [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "amount", dataType: tableau.dataTypeEnum.float },
+        { id: "date", dataType: tableau.dataTypeEnum.date }
+      ]
+  };
     // Config for the client WDC (server-based OAuth flow)
     var config = {
       // This config isn't used for direct OAuth in the WDC,
@@ -64,6 +127,8 @@
     var myConnector = tableau.makeConnector();
 
     myConnector.getSchema = function(schemaCallback) {
+
+      
       var cols = [
         { id: "id", dataType: tableau.dataTypeEnum.string },
         { id: "address", dataType: tableau.dataTypeEnum.string },
@@ -117,7 +182,7 @@
         { id: "is_constituent", dataType: tableau.dataTypeEnum.bool },
         { id: "num_subsidiaries", dataType: tableau.dataTypeEnum.int },
         { id: "parent_corporation_name", dataType: tableau.dataTypeEnum.string },
-{ id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
+        { id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
       ];
       var tableInfo = {
         id: "constituents",
@@ -129,6 +194,10 @@
 
     myConnector.getData = function(table, doneCallback) {
       // Instead of checking client cookies, call the server endpoint
+      const config = JSON.parse(tableau.connectionData);
+      const endpoint = config.endpoint;
+      const pageLimit = config.pageLimit;
+      const startDate = config.startDate;
       var url = "http://localhost:3333/getConstituents";
 
       fetch(url)

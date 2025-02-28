@@ -223,7 +223,7 @@ app.get('/getConstituents', function(req, res) {
 
   // METHOD USING FETCH SOME CONSTITUENTS FUNCTION
   const startUrl = "https://api.sky.blackbaud.com/constituent/v1/constituents";
-  const maxPages = 2;
+  const maxPages = 3;
   let allRecords = [];
 
   fetchSomeConstituents(startUrl, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function(err, results) {
@@ -253,6 +253,12 @@ app.get('/getConstituents', function(req, res) {
   //     value: results
   //   });
   // });
+});
+
+// 5) Paramaterized Data Route: Get parameterized API call data from frontend user input
+app.get('/getBlackbaudData', (req, res) => {
+  const endpoint = req.query.endpoint;
+  const pageLimit = req.query.pageLimit;
 });
 
 // -------------------------------------------------- //
