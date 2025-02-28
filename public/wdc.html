@@ -33,6 +33,19 @@
 
             <!-- This button will pull the API data once the user is authenticated -->
              <button id="getDataButton" class="btn btn-success">Get Data</button>
+
+             <label for="endpointSelect">Select Endpoint:</label>
+             <select id="endpointSelect">
+                <option value="constituents">Constituents</option>
+                <option value="gifts">Gifts</option>
+                <!-- add more endpoints here -->
+             </select>
+
+             <label for="pageLimit">Max Pages:</label>
+             <input type="number" id="pageLimit" value="2" />
+
+             <label for="startDate">Start Date:</label>
+             <input type="date" id="startDate" />
         </div>
     </body>
 </html>
