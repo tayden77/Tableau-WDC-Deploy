@@ -223,7 +223,7 @@ app.get('/getConstituents', function(req, res) {
 
   // METHOD USING FETCH SOME CONSTITUENTS FUNCTION
   const startUrl = "https://api.sky.blackbaud.com/constituent/v1/constituents";
-  const maxPages = 2;
+  const maxPages = 4;
   let allRecords = [];
 
   fetchSomeConstituents(startUrl, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function(err, results) {
