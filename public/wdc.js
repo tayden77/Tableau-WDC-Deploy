@@ -105,7 +105,7 @@
         { id: "is_constituent", dataType: tableau.dataTypeEnum.bool },
         { id: "num_subsidiaries", dataType: tableau.dataTypeEnum.int },
         { id: "parent_corporation_name", dataType: tableau.dataTypeEnum.string },
-{ id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
+        { id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
       ];
       var tableInfo = {
         id: "constituents",
