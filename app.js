@@ -94,6 +94,9 @@ function fetchSomeConstituents(url, accessToken, subscriptionKey, allItems, page
       return callback(new Error(`Status: ${response.statusCode} => ${body}`));
     }
 
+    console.log("Received a page of data from RE NXT...");
+    logTruncated(body, 200);
+
     let data;
     try {
       data = JSON.parse(body);
@@ -223,7 +226,7 @@ app.get('/getConstituents', function(req, res) {
 
   // METHOD USING FETCH SOME CONSTITUENTS FUNCTION
   const startUrl = "https://api.sky.blackbaud.com/constituent/v1/constituents";
-  const maxPages = 4;
+  const maxPages = 190;
   let allRecords = [];
 
   fetchSomeConstituents(startUrl, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function(err, results) {
