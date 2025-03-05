@@ -36,9 +36,15 @@
       if (hasAuth) {
           $(".notsignedin").hide();
           $(".signedin").show();
+
+          // Hide the connect button
+          $("#connectButton").hide();
       } else {
           $(".notsignedin").show();
           $(".signedin").hide();
+
+          // Show the connect button again if needed
+          $("#connectButton").show();
       }
     }
 
