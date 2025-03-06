@@ -26,8 +26,19 @@
 
       // Get Data button triggers the WDC flow
       $("#getDataButton").click(function() {
-          tableau.connectionName = "Blackbaud RE NXT Connector (Server-Side OAuth)";
-          tableau.submit();
+        // read user choices
+        const endpoint = $("#endpointSelect").val();
+        const recordId = $("#recordIdInput").val();
+        const limit = $("#limitInput").val();
+        const offset = $("#offsetInput").val();
+        const maxPages = $("#maxPagesInput").val();
+
+        // store in connectionData
+        const config = { endpoint, recordId, limit, offset, maxPages };
+        tableau. connectionData = JSON.stringify(config);
+
+        tableau.connectionName = "Blackbaud RE NXT Connector (Server-Side OAuth)";
+        tableau.submit();
       });
     });
 
@@ -117,7 +128,16 @@
 
     myConnector.getData = function(table, doneCallback) {
       // Instead of checking client cookies, call the server endpoint
-      var url = "http://localhost:3333/getConstituents";
+      const config = JSON.parse(tableau.connectionData);
+      // e.g., { endpoint: "constituents", recordId: "123", limit: "500", offset: "0", maxPages: "2" }
+
+      // Call the server route /getBlackbaudData with parameters
+      let url = `http://localhost:3333/getBlackbaudData?endpoint=${config.endpoint}`;
+
+      if (config.recordId) url += `&id=${config.recordId}`;
+      if (config.limit) url += `&limit=${config.limit}`;
+      if (config.offset) url += `&offset=${config.offset}`;
+      if (config.maxPages) url += `&maxPages=${config.maxPages}`;
 
       fetch(url)
         .then(function(resp) {

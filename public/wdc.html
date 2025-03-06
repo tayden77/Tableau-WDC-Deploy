@@ -23,16 +23,38 @@
     </head>
     <body>
         <div style="margin: auto; text-align: center; margin-top: 50px; max-width: 300px;">
-            <!-- These labels will toggle depending on whether the user is authenticated or not -->
             <p class="signedin">You are signed in! Open in Tableau Desktop.</p>
             <p class="notsignedin">You are not signed in, please click below to sign in to your Blackbaud account.</p>
-
-            <!-- The connect to Blackbaud button will have a link added to it in the js -->
+        
             <button id="connectButton" class="btn btn-primary">Connect to Blackbaud</button>
-            <br /><br />
-
-            <!-- This button will pull the API data once the user is authenticated -->
-             <button id="getDataButton" class="btn btn-success">Get Data</button>
+            <br/><br/>
+        
+            <hr/>
+            <h4>Data Selection</h4>
+            <label>Endpoint:</label>
+            <select id="endpointSelect">
+              <option value="constituents">Constituents</option>
+              <option value="gifts">Gifts</option>
+            </select>
+            <br/><br/>
+        
+            <label>Single Record ID (optional):</label>
+            <input type="text" id="recordIdInput" placeholder="e.g. 123" />
+            <br/><br/>
+        
+            <label>Limit (optional):</label>
+            <input type="number" id="limitInput" placeholder="e.g. 500 (max 5000)" />
+            <br/><br/>
+        
+            <label>Offset (optional):</label>
+            <input type="number" id="offsetInput" placeholder="e.g. 0" />
+            <br/><br/>
+        
+            <label>Max Pages (optional):</label>
+            <input type="number" id="maxPagesInput" value="2"/>
+            <br/><br/>
+        
+            <button id="getDataButton" class="btn btn-success">Get Data</button>
         </div>
     </body>
 </html>

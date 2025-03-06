@@ -21,6 +21,33 @@ function logTruncated(msg, maxLength = 1000) {
   }
 }
 
+// Helper function to get a single record
+function fetchSingleRecord(url, accessToken, subKey, callback) {
+  const option = {
+    method: 'GET',
+    url: url,
+    headers: {
+      'Authorization' : 'Bearer' + accessToken,
+      'Bb-Api-Subscription-Key': subKey
+    }
+  };
+
+  request(options, function(error, response, body) {
+    if (error) return callback(error);
+    if (response.statusCode !== 200) {
+      return callback(new Error(`Status: ${response.statusCode} => ${body}`));
+    }
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch(e) {
+      return callback(e);
+    }
+    // dat amight be a single object, or a structure with "value"
+    callback(null, data);
+  });
+}
+
 // Helper function to get multiple pages of data from the API at once
 function fetchAllConstituents(url, accessToken, subKey, allItems, callback) {
   const options = {
@@ -107,6 +134,7 @@ function fetchSomeConstituents(url, accessToken, subscriptionKey, allItems, page
     // Append this page's value array
     if (data.value && Array.isArray(data.value)) {
       allItems.push(...data.value);
+      console.log("Page:", pageCount, "Received:", data.value.length, "Total so far:", allItems.length);
     }
 
     // If next_link exists AND we haven't reached maxPages, follow it
@@ -217,6 +245,88 @@ app.get('/status', function(req, res) {
     res.json({ authenticated: false });
   }
 });
+
+app.get('/getBlackbaudData', (req, res) => {
+  if (!storedAccessToken) {
+    return res.status(401).json({ error: "Not authenticated." });
+  }
+
+  const endpoint = req.query.endpoint || "constituents";
+  const limit    = req.query.limit  || 500;
+  const offset   = req.query.offset || 0;
+  const maxPages = req.query.maxPages || 1;
+  const recordId = req.query.id; // optional
+
+  let basePath = "";
+  // If endpoint is "gifts", set base path to gift/v1/gifts
+  if (endpoint === "gifts") {
+    basePath = "gift/v1/gifts";
+  } else {
+    // default to constituents
+    basePath = "constituent/v1/constituents";
+  }
+
+  // If we have an id param, do single record fetch
+  if (recordId) {
+    const singleUrl = `https://api.sky.blackbaud.com/${basePath}/${recordId}`;
+    // for a single record, define a small helper or just do a single request
+    singleRecordFetch(singleUrl, storedAccessToken, subscriptionKey, (err, singleData) => {
+      if (err) {
+        console.error("Single record error:", err);
+        return res.status(500).send("Error: " + err.message);
+      }
+      // Return one record as {value: [ singleData ]}
+      res.json({ value: [ singleData ] });
+    });
+  } else {
+    // multi-record approach
+    const startUrl = `https://api.sky.blackbaud.com/${basePath}?limit=${limit}&offset=${offset}`;
+
+    let allRecords = [];
+    fetchSomeConstituents(
+      startUrl,
+      storedAccessToken,
+      subscriptionKey,
+      allRecords,
+      0,
+      maxPages,
+      function(err, results) {
+        if (err) {
+          console.error("Partial paging error:", err);
+          return res.status(500).send("Error fetching partial data: " + err.message);
+        }
+        res.json({ value: results });
+      }
+    );
+  }
+});
+
+// example single-record fetch
+function singleRecordFetch(url, accessToken, subKey, callback) {
+  const options = {
+    method: 'GET',
+    url: url,
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Bb-Api-Subscription-Key': subKey
+    }
+  };
+
+  request(options, (error, response, body) => {
+    if (error) return callback(error);
+    if (response.statusCode !== 200) {
+      return callback(new Error(`Status: ${response.statusCode} => ${body}`));
+    }
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch(e) {
+      return callback(e);
+    }
+    callback(null, data);
+  });
+}
+
 
 // 4) Data Proxy Route: Fetch data from RE NXT using the stored token.
 app.get('/getConstituents', function(req, res) {
