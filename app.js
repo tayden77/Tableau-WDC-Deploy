@@ -261,9 +261,12 @@ app.get('/getBlackbaudData', (req, res) => {
   // If endpoint is "gifts", set base path to gift/v1/gifts
   if (endpoint === "actions") {
     basePath = "constituent/v1/actions";
-  } else {
+  } else if (endpoint === "constituents") {
     // default to constituents
     basePath = "constituent/v1/constituents";
+  } else {
+    // default to gifts
+    basePath = "gift/v1/gifts";
   }
 
   // If we have an id param, do single record fetch

@@ -156,7 +156,46 @@
         columns: actionsCols
       };
 
-      schemaCallback([constituentsTable, actionsTable]);
+      // Gifts Table Schema
+      const giftsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+
+        // Flatten numeric fields (amount.value, balance.value)
+        { id: "amount_value", dataType: tableau.dataTypeEnum.float },
+        { id: "balance_value", dataType: tableau.dataTypeEnum.float },
+
+        // Simple string or boolean fields
+        { id: "batch_number", dataType: tableau.dataTypeEnum.string },
+        { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "gift_code", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_status", dataType: tableau.dataTypeEnum.string },
+        { id: "is_anonymous", dataType: tableau.dataTypeEnum.bool },
+        { id: "constituency", dataType: tableau.dataTypeEnum.string },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "post_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "post_status", dataType: tableau.dataTypeEnum.string },
+        { id: "subtype", dataType: tableau.dataTypeEnum.string },
+        { id: "type", dataType: tableau.dataTypeEnum.string },
+
+        // Now for the arrays that might contain multiple objects:
+        // We'll store them as strings (JSON)
+        { id: "acknowledgements", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_splits", dataType: tableau.dataTypeEnum.string },
+        { id: "payments", dataType: tableau.dataTypeEnum.string },
+        { id: "receipts", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gifts", dataType: tableau.dataTypeEnum.string }
+      ];
+      const giftsTable = {
+        id: "gifts",
+        alias: "Raiser's Edge NXT Gifts V1",
+        columns: giftsCols
+      };
+
+      schemaCallback([constituentsTable, actionsTable, giftsTable]);
     };
 
     myConnector.getData = function(table, doneCallback) {
@@ -190,7 +229,7 @@
 
           // If "Constituents" table
           if (tableId === "constituents") {
-            data.value.forEach(function(item) {
+            data.value.forEach(item => {
               tableData.push({
                 id: item.id,
                 address: item.address,
@@ -273,8 +312,40 @@
                 status_code: item.status_code,
                 summary: item.summary,
                 type: item.type
-              })
-            })
+              });
+            });
+          }
+          // If "gifts" table
+          else if (tableId === "gifts") {
+            data.value.forEach(gift => {
+              tableData.push({
+                id: gift.id,
+                amount_value: gift.amount?.value || 0,
+                balance_value: gift.balance?.value || 0,
+                batch_number: gift.batch_number,
+                constituent_id: gift.constituent_id,
+                date: gift.date,
+                date_added: gift.date_added,
+                date_modified: gift.date_modified,
+                gift_code: gift.gift_code,
+                gift_status: gift.gift_status,
+                is_anonymous: gift.is_anonymous,
+                constituency: gift.constituency,
+                lookup_id: gift.lookup_id,
+                post_date: gift.post_date,
+                post_status: gift.post_status,
+                subtype: gift.subtype,
+                type: gift.type,
+
+                // Flatten arrays to JSON strings
+                acknowledgements: JSON.stringify(gift.acknowledgements || []),
+                fundraisers: JSON.stringify(gift.fundraisers || []),
+                gift_splits: JSON.stringify(gift.gift_splits || []),
+                payments: JSON.stringify(gift.payments || []),
+                receipts: JSON.stringify(gift.receipts || []),
+                linked_gifts: JSON.stringify(gift.linked_gifts || [])
+              });
+            });
           }
           // Log how many rows we’re about to append
           console.log("About to appendRows:", tableData.length);
