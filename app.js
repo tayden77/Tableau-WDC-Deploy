@@ -259,8 +259,8 @@ app.get('/getBlackbaudData', (req, res) => {
 
   let basePath = "";
   // If endpoint is "gifts", set base path to gift/v1/gifts
-  if (endpoint === "gifts") {
-    basePath = "gift/v1/gifts";
+  if (endpoint === "actions") {
+    basePath = "constituent/v1/actions";
   } else {
     // default to constituents
     basePath = "constituent/v1/constituents";

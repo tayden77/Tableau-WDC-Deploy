@@ -63,7 +63,9 @@
     var myConnector = tableau.makeConnector();
 
     myConnector.getSchema = function(schemaCallback) {
-      var cols = [
+      
+      // Constituents Table Schema
+      const constituentsCols = [
         { id: "id", dataType: tableau.dataTypeEnum.string },
         { id: "address", dataType: tableau.dataTypeEnum.string },
         { id: "age", dataType: tableau.dataTypeEnum.int },
@@ -118,22 +120,55 @@
         { id: "parent_corporation_name", dataType: tableau.dataTypeEnum.string },
         { id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
       ];
-      var tableInfo = {
+      const constituentsTable = {
         id: "constituents",
         alias: "Raiser's Edge NXT Constituents (via server)",
-        columns: cols
+        columns: constituentsCols
       };
-      schemaCallback([tableInfo]);
+
+      // Actions Table Schema
+      const actionsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "category", dataType: tableau.dataTypeEnum.string },
+        { id: "completed", dataType: tableau.dataTypeEnum.bool },
+        { id: "completed_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "completed_status", dataType: tableau.dataTypeEnum.string },
+        { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "description", dataType: tableau.dataTypeEnum.string },
+        { id: "direction", dataType: tableau.dataTypeEnum.string },
+        { id: "end_time", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
+        { id: "location", dataType: tableau.dataTypeEnum.string },
+        { id: "outcome", dataType: tableau.dataTypeEnum.string },
+        { id: "priority", dataType: tableau.dataTypeEnum.string },
+        { id: "start_time", dataType: tableau.dataTypeEnum.string },
+        { id: "status", dataType: tableau.dataTypeEnum.string },
+        { id: "status_code", dataType: tableau.dataTypeEnum.string },
+        { id: "summary", dataType: tableau.dataTypeEnum.string },
+        { id: "type", dataType: tableau.dataTypeEnum.string }
+      ];
+      const actionsTable = {
+        id: "actions",
+        alias: "Raiser's Edge NXT Actions",
+        columns: actionsCols
+      };
+
+      schemaCallback([constituentsTable, actionsTable]);
     };
 
     myConnector.getData = function(table, doneCallback) {
-      // Instead of checking client cookies, call the server endpoint
+      // Parse the user's chosen config from tableau.connectionData
       const config = JSON.parse(tableau.connectionData);
       // e.g., { endpoint: "constituents", recordId: "123", limit: "500", offset: "0", maxPages: "2" }
 
+      // Determine which table the WDC is currently asking for
+      const tableId = table.tableInfo.id;
       // Call the server route /getBlackbaudData with parameters
-      let url = `http://localhost:3333/getBlackbaudData?endpoint=${config.endpoint}`;
-
+      let url = `http://localhost:3333/getBlackbaudData?endpoint=${tableId}`;
+      // add user typed parameters
       if (config.recordId) url += `&id=${config.recordId}`;
       if (config.limit) url += `&limit=${config.limit}`;
       if (config.offset) url += `&offset=${config.offset}`;
@@ -152,64 +187,95 @@
             return;
           }
           var tableData = [];
-          data.value.forEach(function(item) {
-            tableData.push({
-              id: item.id,
-              address: item.address,
-              age: item.age,
-              birthdate: item.birthdate,
-              date_added: item.date_added,
-              date_modified: item.date_modified,
-              deceased: item.deceased,
-              deceased_date: item.deceased_date,
-              email: item.email,
-              first: item.first,
-              former_name: item.former_name,
-              fundraiser_status: item.fundraiser_status,
-              gender: item.gender,
-              gives_anonymously: item.gives_anonymously,
-              inactive: item.inactive,
-              last: item.last,
-              lookup_id: item.lookup_id,
-              marital_status: item.marital_status,
-              middle: item.middle,
-              name: item.name,
-              online_presence: item.online_presence,
-              phone: item.phone,
-              preferred_name: item.preferred_name,
-              spouse: item.spouse,
-              suffix: item.suffix,
-              suffix_2: item.suffix_2,
-              title: item.title,
-              title_2: item.title_2,
-              type: item.type,
-              birthplace: item.birthplace,
-              ethnicity: item.ethnicity,
-              income: item.income,
-              religion: item.religion,
-              industry: item.industry,
-              matches_gifts: item.matches_gifts,
-              matching_gift_per_gift_min: item.matching_gift_per_gift_min,
-              matching_gift_per_gift_max: item.matching_gift_per_gift_max,
-              matching_gift_total_min: item.matching_gift_total_min,
-              matching_gift_total_max: item.matching_gift_total_max,
-              matching_gift_factor: item.matching_gift_factor,
-              matching_gift_notes: item.matching_gift_notes,
-              num_employees: item.num_employees,
-              is_memorial: item.is_memorial,
-              is_solicitor: item.is_solicitor,
-              no_valid_address: item.no_valid_address,
-              receipt_type: item.receipt_type,
-              target: item.target,
-              requests_no_email: item.requests_no_email,
-              import_id: item.import_id,
-              is_constituent: item.is_constituent,
-              num_subsidiaries: item.num_subsidiaries,
-              parent_corporation_name: item.parent_corporation_name,
-              parent_corporation_id: item.parent_corporation_id
-            });
-          });
 
+          // If "Constituents" table
+          if (tableId === "constituents") {
+            data.value.forEach(function(item) {
+              tableData.push({
+                id: item.id,
+                address: item.address,
+                age: item.age,
+                birthdate: item.birthdate,
+                date_added: item.date_added,
+                date_modified: item.date_modified,
+                deceased: item.deceased,
+                deceased_date: item.deceased_date,
+                email: item.email,
+                first: item.first,
+                former_name: item.former_name,
+                fundraiser_status: item.fundraiser_status,
+                gender: item.gender,
+                gives_anonymously: item.gives_anonymously,
+                inactive: item.inactive,
+                last: item.last,
+                lookup_id: item.lookup_id,
+                marital_status: item.marital_status,
+                middle: item.middle,
+                name: item.name,
+                online_presence: item.online_presence,
+                phone: item.phone,
+                preferred_name: item.preferred_name,
+                spouse: item.spouse,
+                suffix: item.suffix,
+                suffix_2: item.suffix_2,
+                title: item.title,
+                title_2: item.title_2,
+                type: item.type,
+                birthplace: item.birthplace,
+                ethnicity: item.ethnicity,
+                income: item.income,
+                religion: item.religion,
+                industry: item.industry,
+                matches_gifts: item.matches_gifts,
+                matching_gift_per_gift_min: item.matching_gift_per_gift_min,
+                matching_gift_per_gift_max: item.matching_gift_per_gift_max,
+                matching_gift_total_min: item.matching_gift_total_min,
+                matching_gift_total_max: item.matching_gift_total_max,
+                matching_gift_factor: item.matching_gift_factor,
+                matching_gift_notes: item.matching_gift_notes,
+                num_employees: item.num_employees,
+                is_memorial: item.is_memorial,
+                is_solicitor: item.is_solicitor,
+                no_valid_address: item.no_valid_address,
+                receipt_type: item.receipt_type,
+                target: item.target,
+                requests_no_email: item.requests_no_email,
+                import_id: item.import_id,
+                is_constituent: item.is_constituent,
+                num_subsidiaries: item.num_subsidiaries,
+                parent_corporation_name: item.parent_corporation_name,
+                parent_corporation_id: item.parent_corporation_id
+              });
+            });
+          }
+          // If "actions" table
+          else if (tableId === "actions") {
+            data.value.forEach(item => {
+              tableData.push({
+                id: item.id,
+                category: item.category,
+                completed: item.completed,
+                completed_date: item.completed_date,
+                completed_status: item.completed_status,
+                constituent_id: item.constituent_id,
+                date: item.date,
+                date_added: item.date_added,
+                date_modified: item.date_modified,
+                description: item.description,
+                direction: item.direction,
+                end_time: item.end_time,
+                fundraisers: item.fundraisers,
+                location: item.location,
+                outcome: item.outcome,
+                priority: item.priority,
+                start_time: item.start_time,
+                status: item.status,
+                status_code: item.status_code,
+                summary: item.summary,
+                type: item.type
+              })
+            })
+          }
           // Log how many rows we’re about to append
           console.log("About to appendRows:", tableData.length);
           
