@@ -303,7 +303,6 @@
                 description: item.description,
                 direction: item.direction,
                 end_time: item.end_time,
-                fundraisers: item.fundraisers,
                 location: item.location,
                 outcome: item.outcome,
                 priority: item.priority,
@@ -311,7 +310,9 @@
                 status: item.status,
                 status_code: item.status_code,
                 summary: item.summary,
-                type: item.type
+                type: item.type,
+                // Flatten arrays to JSON strings
+                fundraisers: JSON.stringify(item.fundraisers || [])
               });
             });
           }
