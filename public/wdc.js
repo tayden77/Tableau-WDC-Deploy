@@ -29,15 +29,16 @@
         // read user choices
         const endpoint = $("#endpointSelect").val();
         const recordId = $("#recordIdInput").val();
+        const queryId = $("#queryIdInput").val();
         const limit = $("#limitInput").val();
         const offset = $("#offsetInput").val();
         const maxPages = $("#maxPagesInput").val();
 
         // store in connectionData
-        const config = { endpoint, recordId, limit, offset, maxPages };
-        tableau. connectionData = JSON.stringify(config);
+        const config = { endpoint, recordId, queryId, limit, offset, maxPages };
+        tableau.connectionData = JSON.stringify(config);
 
-        tableau.connectionName = "Blackbaud RE NXT Connector (Server-Side OAuth)";
+        tableau.connectionName = "Blackbaud RE NXT Connector (Server-Side OAuth) - " + endpoint;
         tableau.submit();
       });
     });
@@ -209,6 +210,7 @@
       let url = `http://localhost:3333/getBlackbaudData?endpoint=${tableId}`;
       // add user typed parameters
       if (config.recordId) url += `&id=${config.recordId}`;
+      if (config.queryId) url += `&queryId=${config.queryId}`;
       if (config.limit) url += `&limit=${config.limit}`;
       if (config.offset) url += `&offset=${config.offset}`;
       if (config.maxPages) url += `&maxPages=${config.maxPages}`;
