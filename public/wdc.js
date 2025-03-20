@@ -196,7 +196,21 @@
         columns: giftsCols
       };
 
-      schemaCallback([constituentsTable, actionsTable, giftsTable]);
+      const queryCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "name", dataType: tableau.dataTypeEnum.string },
+        { id: "address", dataType: tableau.dataTypeEnum.string },
+        { id: "phone", dataType: tableau.dataTypeEnum.string },
+        { id: "first", dataType: tableau.dataTypeEnum.string }
+      ];
+
+      const queryTable = {
+        id: "query",
+        alias: "Raiser's Edge NXT Query",
+        columns: queryCols
+      };
+
+      schemaCallback([constituentsTable, actionsTable, giftsTable, queryTable]);
     };
 
     myConnector.getData = function(table, doneCallback) {
@@ -232,16 +246,17 @@
           // If "Constituents" table
           if (tableId === "constituents") {
             data.value.forEach(item => {
+              console.log("Constituent Item:", JSON.stringify(item, null, 2));
               tableData.push({
                 id: item.id,
-                address: item.address,
+                address: JSON.stringify(item.address || {}),
                 age: item.age,
-                birthdate: item.birthdate,
+                birthdate: JSON.stringify(item.birthdate || {}),
                 date_added: item.date_added,
                 date_modified: item.date_modified,
                 deceased: item.deceased,
-                deceased_date: item.deceased_date,
-                email: item.email,
+                deceased_date: JSON.stringify(item.deceased_date || {}),
+                email: JSON.stringify(item.email || {}),
                 first: item.first,
                 former_name: item.former_name,
                 fundraiser_status: item.fundraiser_status,
@@ -253,10 +268,10 @@
                 marital_status: item.marital_status,
                 middle: item.middle,
                 name: item.name,
-                online_presence: item.online_presence,
-                phone: item.phone,
+                online_presence: JSON.stringify(item.online_presence || {}),
+                phone: JSON.stringify(item.phone || {}),
                 preferred_name: item.preferred_name,
-                spouse: item.spouse,
+                spouse: JSON.stringify(item.spouse || {}),
                 suffix: item.suffix,
                 suffix_2: item.suffix_2,
                 title: item.title,
@@ -268,10 +283,10 @@
                 religion: item.religion,
                 industry: item.industry,
                 matches_gifts: item.matches_gifts,
-                matching_gift_per_gift_min: item.matching_gift_per_gift_min,
-                matching_gift_per_gift_max: item.matching_gift_per_gift_max,
-                matching_gift_total_min: item.matching_gift_total_min,
-                matching_gift_total_max: item.matching_gift_total_max,
+                matching_gift_per_gift_min: JSON.stringify(item.matching_gift_per_gift_min || {}),
+                matching_gift_per_gift_max: JSON.stringify(item.matching_gift_per_gift_max || {}),
+                matching_gift_total_min: JSON.stringify(item.matching_gift_total_min || {}),
+                matching_gift_total_max: JSON.stringify(item.matching_gift_total_max || {}),
                 matching_gift_factor: item.matching_gift_factor,
                 matching_gift_notes: item.matching_gift_notes,
                 num_employees: item.num_employees,
@@ -347,6 +362,18 @@
                 payments: JSON.stringify(gift.payments || []),
                 receipts: JSON.stringify(gift.receipts || []),
                 linked_gifts: JSON.stringify(gift.linked_gifts || [])
+              });
+            });
+          }
+          // If "query" Table
+          else if (tableId === "query") {
+            data.value.forEach(item => {
+              tableData.push({
+                id: item["ID"],
+                name: item["Name"],
+                address: item["Address"],
+                phone: item["Phone"],
+                first: item["First"]
               });
             });
           }

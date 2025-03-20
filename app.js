@@ -23,11 +23,11 @@ function logTruncated(msg, maxLength = 1000) {
 
 // Helper function to get a single record
 function fetchSingleRecord(url, accessToken, subKey, callback) {
-  const option = {
+  const options = {
     method: 'GET',
     url: url,
     headers: {
-      'Authorization' : 'Bearer' + accessToken,
+      'Authorization' : 'Bearer ' + accessToken,
       'Bb-Api-Subscription-Key': subKey
     }
   };
@@ -129,6 +129,10 @@ function fetchSomeConstituents(url, accessToken, subscriptionKey, allItems, page
       data = JSON.parse(body);
     } catch (e) {
       return callback(e);
+    }
+    // TESTING: Log a raw JSON constituent to check fields
+    if (data.value && data.value.length > 0) {
+      console.log("Sample constituent from server side:", JSON.stringify(data.value[0], null, 2));
     }
 
     // Append this page's value array
@@ -256,6 +260,7 @@ app.get('/getBlackbaudData', (req, res) => {
   const offset   = req.query.offset || 0;
   const maxPages = req.query.maxPages || 1;
   const recordId = req.query.id; // optional
+  const queryId = req.query.queryId;
 
   let basePath = "";
   // If endpoint is "gifts", set base path to gift/v1/gifts
@@ -264,9 +269,14 @@ app.get('/getBlackbaudData', (req, res) => {
   } else if (endpoint === "constituents") {
     // default to constituents
     basePath = "constituent/v1/constituents";
-  } else {
+  } else if (endpoint === "gifts") {
     // default to gifts
     basePath = "gift/v1/gifts";
+  } else if (endpoint === "query") {
+    if (!queryId) {
+      return res.status(400).send("Missing queryId param for Query endpoint.");
+    }
+    basePath = `query/v1/queries/${queryId}/results`;
   }
 
   // If we have an id param, do single record fetch
