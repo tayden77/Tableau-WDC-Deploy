@@ -37,7 +37,12 @@
               <option value="constituents">Constituents</option>
               <option value="actions">Actions</option>
               <option value="gifts">Gifts</option>
-              <option value="query">Query</option>
+              <option value="funds">Funds</option>
+              <option value="opportunities">Opportunities</option>
+              <option value="events">Events</option>
+              <option value="campaigns">Campaigns</option>
+              <option value="appeals">Appeals</option>
+              <option value="query">Dynamic Query</option>
             </select>
             <br/><br/>
 
@@ -66,12 +71,126 @@
                       <strong>Multi-Record Selection</strong>
                       <label>Number of Pages</label>
                       <input type="number" id="maxPagesInput" value="Default is 2 Pages"/>
-                      <br/>
+                        <br/>
                       <label>Records Per Page</label>
                       <input type="number" id="limitInput" placeholder="Default 500 (Max 5000)" />
-                      <br/>
+                        <br/>
                       <label>Starting Record Offset</label>
                       <input type="number" id="offsetInput" placeholder="Default 0 (use increments of records per page e.g. 500/1000/1500...)" />
+                      <label>
+                        <br/>
+                      <label>Name</label>
+                      <input type="text" id="nameInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Lookup ID</label>
+                      <input type="text" id="lookupIdInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Date Added</label>
+                      <input type="text" id="dateAddedInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Last Modified Date</label>
+                      <input type="text" id="lastModifiedInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Search Text</label>
+                      <input type="text" id="searchTextInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Sort Token</label>
+                      <input type="text" id="sortTokenInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>List ID</label>
+                      <input type="text" id="listIdInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Fund ID</label>
+                      <input type="text" id="fundIdInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Constituent ID</label>
+                      <input type="text" id="constituentIdInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Category</label>
+                      <input type="text" id="categoryInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Start Date From</label>
+                      <input type="text" id="startDateFromInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Start Date To</label>
+                      <input type="text" id="startDateToInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Fields</label>
+                      <input type="text" id="fieldsInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Sort</label>
+                      <input type="text" id="sortInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Group</label>
+                      <input type="text" id="groupInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>statusCode</label>
+                      <input type="text" id="statusCodeInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Continuation Token</label>
+                      <input type="text" id="continuationTokenInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Post Status</label>
+                      <input type="text" id="postStatusInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Gift Type</label>
+                      <input type="text" id="giftTypeInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Receipt Status</label>
+                      <input type="text" id="receiptStatusInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Acknowledgement Status</label>
+                      <input type="text" id="acknowledgementStatusInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Campaign ID</label>
+                      <input type="text" id="campaignIdInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Appeal ID</label>
+                      <input type="text" id="appealIdInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Start Gift Date</label>
+                      <input type="text" id="startGiftDateInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>End Gift Date</label>
+                      <input type="text" id="endGiftDateInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>Start Gift Amount</label>
+                      <input type="text" id="startGiftAmountInput" placeholder="" />
+                      <label>
+                        <br/>
+                      <label>End Gift Amount</label>
+                      <input type="text" id="endGiftAmountInput" placeholder="" />
+                      <label>
+                        <input type="checkbox" id="fetchAllRecords" />
+                        Fetch all records (ignore Limit/Offset)
+                        <input type="checkbox" id="includeInactiveInput" />
+                        Include Inactive Records
+                      </label>
                       <br/>
                       <br/>
                     </div>
