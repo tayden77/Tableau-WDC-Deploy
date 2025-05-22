@@ -65,7 +65,7 @@ function fetchSingleRecord(url, accessToken, subKey, callback) {
 
 // Fetch multiple API records
 function fetchMultipleRecords(url, accessToken, subscriptionKey, allItems, pageCount, maxPages, callback) {
-  if (pageCount >= maxPages) {
+  if (Number.isFinite(maxPages) && pageCount >= maxPages) {
     return callback(null, allItems);
   }
   const options = {
@@ -177,6 +177,9 @@ app.get('/status', function (req, res) {
 
 // API Retrieval Path (Page logging for validation)
 app.use('/getBlackbaudData', (req, res, next) => {
+  const DEFAULT_LIMIT = 500;
+  const DEFAULT_OFFSET = 0;
+
   const { endpoint, page, offset } = req.query;
   // Start logging while Tableau is Paging
   if (page !== undefined || offset !== undefined) {
@@ -200,7 +203,7 @@ app.get('/bulk/actions', async (req, res) => {
   let pageCount = 0;
   let total = 0;
 
-  const out = stringify({ header:true });
+  const out = stringify({ header: true });
   const dest = fs.createWriteStream(tmpFile);
   out.pipe(dest);
 
@@ -236,7 +239,7 @@ app.get('/bulk/actions', async (req, res) => {
   } catch (err) {
     console.error('Bulk actions error', err);
     out.destroy();
-    fs.unlink(tmpFile, ()=>{});
+    fs.unlink(tmpFile, () => { });
     res.status(500).send('Bulk Actions failed: ' + err.message);
   }
 });
@@ -252,13 +255,13 @@ app.get('/bulk/actions/chunk', (req, res) => {
   const rows = [];
 
   fs.createReadStream(file)
-    .pipe(require('csv-parse')({ columns:true }))
+    .pipe(require('csv-parse')({ columns: true }))
     .on('data', (row) => {
       if (rows.length >= chunkSize) return;
       const idx = rows.length + page * chunkSize;
       if (idx >= start && idx < end) rows.push(row);
     })
-    .on('end', () => res.json({ value: rows, page:Number(page), chunkSize:Number(chunkSize) }));
+    .on('end', () => res.json({ value: rows, page: Number(page), chunkSize: Number(chunkSize) }));
 });
 
 // API Retrieval Path
@@ -267,41 +270,49 @@ app.get('/getBlackbaudData', async (req, res) => {
     return res.status(401).json({ error: "Not authenticated." });
   }
   // API URL parameters
+  const DEFAULT_LIMIT = 500;
+  const DEFAULT_OFFSET = 0;
   const endpoint = req.query.endpoint || "constituents";
-  const limit = parseInt(req.query.limit || '500', 10);
-  const offset = parseInt(req.query.offset || '0', 10);
-  const maxPages = parseInt(req.query.maxPages || '1', 10);
+  const limit = req.query.limit !== undefined
+    ? parseInt(req.query.limit, 10)
+    : DEFAULT_LIMIT;
+  const offset = req.query.offset !== undefined
+    ? parseInt(req.query.offset, 10)
+    : DEFAULT_OFFSET;
+  const maxPages = req.query.maxPages !== undefined
+    ? parseInt(req.query.maxPages, 10)
+    : undefined;
   const name = req.query.name || null;
-  const lookupId = req.query.lookupId || null;
+  const lookupId = req.query.lookup_id || req.query.lookupId || null;
   const recordId = req.query.id; // Endpoint specific ID for single record retrieval
-  const queryId = req.query.queryId;
-  const dateAdded = req.query.dateAdded || null;
-  const lastModified = req.query.lastModified || null;
-  const includeInactive = req.query.includeInactive === 'true';
-  const searchText = req.query.searchText || null;
-  const sortToken = req.query.sortToken || null;
-  const listId = req.query.listId || null;
-  const fundId = req.query.fundId || null;
-  const eventId = req.query.eventId || null;
-  const constituentId = req.query.constituentId || null;
+  const queryId = req.query.query_id || req.query.queryId;
+  const dateAdded = req.query.date_added || req.query.dateAdded || null;
+  const lastModified = req.query.last_modified || req.query.lastModified || null;
+  const includeInactive = req.query.include_inactive || req.query.includeInactive === 'true';
+  const searchText = req.query.search_text || req.query.searchText || null;
+  const sortToken = req.query.sort_token || req.query.sortToken || null;
+  const listId = req.query.list_id || req.query.listId || null;
+  const fundId = req.query.fund_id || req.query.fundId || null;
+  const eventId = req.query.event_id || req.query.eventId || null;
+  const constituentId = req.query.constituent_id || req.query.constituentId || null;
   const category = req.query.category || null;
-  const startDateFrom = req.query.startDateFrom || null;
-  const startDateTo = req.query.startDateTo || null;
+  const startDateFrom = req.query.start_date_from || req.query.startDateFrom || null;
+  const startDateTo = req.query.start_date_to || req.query.startDateTo || null;
   const fields = req.query.fields || null;
   const sort = req.query.sort || null;
   const group = req.query.group || null;
-  const statusCode = req.query.statusCode || null;
-  const continuationToken = req.query.continuationToken || null;
-  const postStatus = req.query.postStatus || null;
-  const giftType = req.query.giftType || null;
-  const receiptStatus = req.query.receiptStatus || null;
-  const acknowledgementStatus = req.query.acknowledgementStatus || null;
-  const campaignId = req.query.campaignId || null;
-  const appealId = req.query.appealId || null;
-  const startGiftDate = req.query.startGiftDate || null;
-  const endGiftDate = req.query.endGiftDate || null;
-  const startGiftAmount = req.query.startGiftAmount || null;
-  const endGiftAmount = req.query.endGiftAmount || null;
+  const statusCode = req.query.status_code || req.query.statusCode || null;
+  const continuationToken = req.query.continuation_token || req.query.continuationToken || null;
+  const postStatus = req.query.post_status || req.query.postStatus || null;
+  const giftType = req.query.gift_type || req.query.giftType || null;
+  const receiptStatus = req.query.receipt_status || req.query.receiptStatus || null;
+  const acknowledgementStatus = req.query.acknowledgement_status || req.query.acknowledgementStatus || null;
+  const campaignId = req.query.campaign_id || req.query.campaignId || null;
+  const appealId = req.query.appeal_id || req.query.appealId || null;
+  const startGiftDate = req.query.start_gift_date || req.query.startGiftDate || null;
+  const endGiftDate = req.query.end_gift_date || req.query.endGiftDate || null;
+  const startGiftAmount = req.query.start_gift_amount || req.query.startGiftAmount || null;
+  const endGiftAmount = req.query.end_gift_amount || req.query.endGiftAmount || null;
 
   // Actions Endpoint
   if (endpoint === "actions") { // Action List (all consts) [computed_status, date_added, last_modified, sort_token, status_code, list_id, continuation_token, offset, limit]
@@ -313,13 +324,13 @@ app.get('/getBlackbaudData', async (req, res) => {
       });
     } else {
       const url = `https://api.sky.blackbaud.com/constituent/v1/actions?`;
-      if (dateAdded)         url += `date_added=${encodeURIComponent(dateAdded)}&`;
-      if (lastModified)      url += `last_modified=${encodeURIComponent(lastModified)}&`;
-      if (sortToken)         url += `sort_token=${encodeURIComponent(sortToken)}&`;
-      if (statusCode)        url += `status_code=${encodeURIComponent(statusCode)}&`;
-      if (listId)            url += `list_id=${encodeURIComponent(listId)}&`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
+      if (statusCode) url += `status_code=${encodeURIComponent(statusCode)}&`;
+      if (listId) url += `list_id=${encodeURIComponent(listId)}&`;
       if (continuationToken) url += `continuation_token=${encodeURIComponent(continuationToken)}&`;
-                             url += `limit=${limit}&offset=${offset}`;
+      url += `limit=${limit}&offset=${offset}`;
       let allRecords = [];
       fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
         if (err) return res.status(500).send("Error fetching partial data: " + err.message);
@@ -346,28 +357,36 @@ app.get('/getBlackbaudData', async (req, res) => {
   }
   // Event List Endpoint
   else if (endpoint === "events") { // Get Event List [name, lookup_id, category, event_id, start_date_from, start_date_to, date_added, last_modified, fields, sort, include_inactive, group, limit, offset]
-    let url = `https://api.sky.blackbaud.com/event/v1/eventlist?`;
-    if (name)             url += `name=${encodeURIComponent(name)}&`;
-    if (lookupId)         url += `lookup_id=${encodeURIComponent(lookupId)}&`;
-    if (category)         url += `category=${encodeURIComponent(category)}&`;
-    if (startDateFrom)    url += `start_date_from=${encodeURIComponent(startDateFrom)}&`;
-    if (startDateTo)      url += `start_date_to=${encodeURIComponent(startDateTo)}&`;
-    if (dateAdded)        url += `date_added=${encodeURIComponent(dateAdded)}&`;
-    if (lastModified)     url += `last_modified=${encodeURIComponent(lastModified)}&`;
-    if (fields)           url += `fields=${encodeURIComponent(fields)}&`;
-    if (sort)             url += `sort=${encodeURIComponent(sort)}&`;
-                          url += `include_inactive=${includeInactive}&`;
-    if (eventId)          url += `event_id=${encodeURIComponent(eventId)}&`;
-    if (group)            url += `group=${encodeURIComponent(group)}&`;
-                          url += `limit=${limit}&offset=${offset}`;
-    let allRecords = [];
-    fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
-      if (err) return res.status(500).send("Error fetching partial data: " + err.message);
-      res.json({ value: results });
-    });
+    if (recordId) {
+      const singleUrl = `https://api.sky.blackbaud.com/event/v1/events/${recordId}`;
+      fetchSingleRecord(singleUrl, storedAccessToken, subscriptionKey, (err, singleData) => {
+        if (err) return res.status(500).send("Error: " + err.message);
+        res.json({ value: [singleData] });
+      });
+    } else {
+      let url = `https://api.sky.blackbaud.com/event/v1/eventlist?`;
+      if (name) url += `name=${encodeURIComponent(name)}&`;
+      if (lookupId) url += `lookup_id=${encodeURIComponent(lookupId)}&`;
+      if (category) url += `category=${encodeURIComponent(category)}&`;
+      if (startDateFrom) url += `start_date_from=${encodeURIComponent(startDateFrom)}&`;
+      if (startDateTo) url += `start_date_to=${encodeURIComponent(startDateTo)}&`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      if (fields) url += `fields=${encodeURIComponent(fields)}&`;
+      if (sort) url += `sort=${encodeURIComponent(sort)}&`;
+      url += `include_inactive=${includeInactive}&`;
+      if (eventId) url += `event_id=${encodeURIComponent(eventId)}&`;
+      if (group) url += `group=${encodeURIComponent(group)}&`;
+      url += `limit=${limit}&offset=${offset}`;
+      let allRecords = [];
+      fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
+        if (err) return res.status(500).send("Error fetching partial data: " + err.message);
+        res.json({ value: results });
+      });
+    }
   }
-  // Gifts Enpoint
-  else if (endpoint === "gifts") { // Gift List [date_added, last_modified, sort_token, consttituent_id, post_status, gift_type, receipt_status, acknowledgement_status, campaign_id, fund_id, appeal_id, start_gift_date, end_gift_date, start_gift_amount, end_gift_amount, list_id, sort, limit, offset]
+  // Gifts Endpoint
+  else if (endpoint === "gifts") { // Gift List [date_added, last_modified, sort_token, constituent_id, post_status, gift_type, receipt_status, acknowledgement_status, campaign_id, fund_id, appeal_id, start_gift_date, end_gift_date, start_gift_amount, end_gift_amount, list_id, sort, limit, offset]
     if (recordId) {
       const singleUrl = `https://api.sky.blackbaud.com/gift/v1/gifts/${recordId}`;
       fetchSingleRecord(singleUrl, storedAccessToken, subscriptionKey, (err, singleData) => {
@@ -376,24 +395,25 @@ app.get('/getBlackbaudData', async (req, res) => {
       });
     } else {
       let url = `https://api.sky.blackbaud.com/gift/v1/gifts?`;
-      if (dateAdded)        url += `date_added=${encodeURIComponent(dateAdded)}&`;
-      if (lastModified)     url += `last_modified=${encodeURIComponent(lastModified)}&`;
-      if (sortToken)        url += `sort_token=${encodeURIComponent(sortToken)}&`;
-      if (constituentId)    url += `constituent_id=${encodeURIComponent(constituentId)}&`;
-      if (postStatus)       url += `post_status=${encodeURIComponent(postStatus)}&`; // needs to be added as parameter
-      if (giftType)         url += `gift_type=${encodeURIComponent(giftType)}&`;     // 
-      if (receiptStatus)    url += `receipt_status=${encodeURIComponent(receiptStatus)}&`;
-      if (acknowledgementStatus) url+= `acknowledgement_status=${encodeURIComponent(acknowledgementStatus)}&`;
-      if (campaignId)       url += `campaign_id=${encodeURIComponent(campaignId)}&`;
-      if (fundId)           url += `fund_id=${encodeURIComponent(fundId)}&`;
-      if (appealId)         url += `appeal_id=${encodeURIComponent(appealId)}&`;
-      if (startGiftDate)    url += `start_gift_date=${encodeURIComponent(startGiftDate)}&`;
-      if (endGiftDate)      url += `end_gift_date=${encodeURIComponent(endGiftDate)}&`;
-      if (startGiftAmount)  url += `start_gift_amount=${encodeURIComponent(startGiftAmount)}&`;
-      if (endGiftAmount)    url += `end_gift_amount=${encodeURIComponent(endGiftAmount)}&`;
-      if (listId)           url += `list_id=${encodeURIComponent(listId)}&`;
-      if (sort)             url += `sort=${encodeURIComponent(sort)}&`;
-                            url += `limit=${limit}&offset=${offset}`;
+      if (dateAdded) url += `date_added=${encodeURI(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
+      if (constituentId) url += `constituent_id=${encodeURIComponent(constituentId)}&`;
+      if (postStatus) url += `post_status=${encodeURIComponent(postStatus)}&`; // needs to be added as parameter
+      if (giftType) url += `gift_type=${encodeURIComponent(giftType)}&`;     // 
+      if (receiptStatus) url += `receipt_status=${encodeURIComponent(receiptStatus)}&`;
+      if (acknowledgementStatus) url += `acknowledgement_status=${encodeURIComponent(acknowledgementStatus)}&`;
+      if (campaignId) url += `campaign_id=${encodeURIComponent(campaignId)}&`;
+      if (fundId) url += `fund_id=${encodeURIComponent(fundId)}&`;
+      if (appealId) url += `appeal_id=${encodeURIComponent(appealId)}&`;
+      if (startGiftDate) url += `start_gift_date=${encodeURI(startGiftDate)}&`;
+      if (endGiftDate) url += `end_gift_date=${encodeURI(endGiftDate)}&`;
+      if (startGiftAmount) url += `start_gift_amount=${encodeURIComponent(startGiftAmount)}&`;
+      if (endGiftAmount) url += `end_gift_amount=${encodeURIComponent(endGiftAmount)}&`;
+      if (listId) url += `list_id=${encodeURIComponent(listId)}&`;
+      if (sort) url += `sort=${encodeURIComponent(sort)}&`;
+      url += `limit=${limit}&offset=${offset}`;
+      console.log("→ Initial Gifts URL:", url);
       let allRecords = [];
       fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
         if (err) return res.status(500).send("Error fetching partial data: " + err.message);
@@ -411,12 +431,12 @@ app.get('/getBlackbaudData', async (req, res) => {
       });
     } else {
       let url = `https://api.sky.blackbaud.com/fundraising/v1/funds?`;
-      if (dateAdded)        url += `date_added=${encodeURIComponent(dateAdded)}&`;
-      if (lastModified)     url += `last_modified=${encodeURIComponent(lastModified)}&`;
-      if (sortToken)        url += `sort_token=${encodeURIComponent(sortToken)}&`;
-                            url += `include_inactive=${includeInactive}&`;
-      if (fundId)           url += `fund_id=${encodeURIComponent(fundId)}&`;
-                            url += `limit=${limit}&offset=${offset}`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
+      url += `include_inactive=${includeInactive}&`;
+      if (fundId) url += `fund_id=${encodeURIComponent(fundId)}&`;
+      url += `limit=${limit}&offset=${offset}`;
       let allRecords = [];
       fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
         if (err) return res.status(500).send("Error fetching partial data: " + err.message);
@@ -434,11 +454,11 @@ app.get('/getBlackbaudData', async (req, res) => {
       });
     } else {
       let url = `https://api.sky.blackbaud.com/fundraising/v1/campaigns?`;
-      if (dateAdded)        url += `date_added=${encodeURIComponent(dateAdded)}&`;
-      if (lastModified)     url += `last_modified=${encodeURIComponent(lastModified)}&`;
-      if (sortToken)        url += `sort_token=${encodeURIComponent(sortToken)}&`;
-                            url += `include_inactive=${includeInactive}&`;
-                            url += `limit=${limit}&offset=${offset}`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
+      url += `include_inactive=${includeInactive}&`;
+      url += `limit=${limit}&offset=${offset}`;
       let allRecords = [];
       fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
         if (err) return res.status(500).send("Error fetching partial data: " + err.message);
@@ -456,11 +476,11 @@ app.get('/getBlackbaudData', async (req, res) => {
       });
     } else {
       let url = `https://api.sky.blackbaud.com/fundraising/v1/appeals?`;
-      if (dateAdded)        url += `date_added=${encodeURIComponent(dateAdded)}&`;
-      if (lastModified)     url += `last_modified=${encodeURIComponent(lastModified)}&`;
-      if (sortToken)        url += `sort_token=${encodeURIComponent(sortToken)}&`;
-                            url += `include_inactive=${includeInactive}&`;
-                            url += `limit=${limit}&offset=${offset}`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
+      url += `include_inactive=${includeInactive}&`;
+      url += `limit=${limit}&offset=${offset}`;
       let allRecords = [];
       fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
         if (err) return res.status(500).send("Error fetching partial data: " + err.message);
@@ -480,14 +500,14 @@ app.get('/getBlackbaudData', async (req, res) => {
     } else {
       // List endpoint
       let url = `https://api.sky.blackbaud.com/opportunity/v1/opportunities?`;
-      if (dateAdded)      url += `date_added=${encodeURIComponent(dateAdded)}&`;
-      if (lastModified)   url += `last_modified=${encodeURIComponent(lastModified)}&`;
-                          url += `include_inactive=${includeInactive}&`;
-      if (searchText)     url += `search_text=${encodeURIComponent(searchText)}&`;
-      if (sortToken)      url += `sort_token=${encodeURIComponent(sortToken)}&`;
-      if (constituentId)  url += `constituent_id=${encodeURIComponent(constituentId)}&`;
-      if (listId)         url += `list_id=${encodeURIComponent(listId)}&`;
-                          url += `limit=${limit}&offset=${offset}`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
+      url += `include_inactive=${includeInactive}&`;
+      if (searchText) url += `search_text=${encodeURIComponent(searchText)}&`;
+      if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
+      if (constituentId) url += `constituent_id=${encodeURIComponent(constituentId)}&`;
+      if (listId) url += `list_id=${encodeURIComponent(listId)}&`;
+      url += `limit=${limit}&offset=${offset}`;
       let allRecords = [];
       fetchMultipleRecords(url, storedAccessToken, subscriptionKey, allRecords, 0, maxPages, function (err, results) {
         if (err) return res.status(500).send("Error fetching partial data: " + err.message);

@@ -15,14 +15,15 @@ function mapConstituents(item) {
     state: item.address ? item.address.state : null,
     address_type: item.address ? item.address.type : null,
     age: item.age,
-    birthdate: JSON.stringify(item.birthdate || {}),
     birth_day: item.birthdate ? item.birthdate.d : null,
     birth_month: item.birthdate ? item.birthdate.m : null,
     birth_year: item.birthdate ? item.birthdate.y : null,
-    date_added: item.date_added,
-    date_modified: item.date_modified,
+    date_added: item.date_added ? new Date(item.date_added) : null,
+    date_modified: item.date_modified ? new Date(item.date_modified) : null,
     deceased: item.deceased,
-    deceased_date: JSON.stringify(item.deceased_date || {}),
+    deceased_date_day: item.deceased_date ? item.deceased_date.d : null,
+    deceased_date_month: item.deceased_date ? item.deceased_date.m : null,
+    deceased_date_year: item.deceased_date ? item.deceased_date.y : null,
     email: JSON.stringify(item.email || {}),
     email_id: item.email ? item.email.id : null,
     email_address: item.email ? item.email.address : null,
@@ -97,12 +98,12 @@ function mapActions(item) {
     id: item.id,
     category: item.category,
     completed: item.completed,
-    completed_date: item.completed_date,
-    completed_status: item.completed_status,
+    completed_date: item.completed_date ? new Date(item.completed_date) : null,
+    computed_status: item.computed_status,
     constituent_id: item.constituent_id,
-    date: item.date,
-    date_added: item.date_added,
-    date_modified: item.date_modified,
+    date: item.date ? new Date(item.date) : null,
+    date_added: item.date_added ? new Date(item.date_added) : null,
+    date_modified: item.date_modified ? new Date(item.date_modified) : null,
     description: item.description,
     direction: item.direction,
     end_time: item.end_time,
@@ -120,48 +121,159 @@ function mapActions(item) {
 }
 
 function mapGifts(item) {
-  return {
+  const out = {
+    // Scalar fields
     id: item.id,
-    amount_value: item.amount ? item.amount.value : 0,
-    balance_value: item.balance ? item.balance.value : 0,
+    amount_value: item.amount?.value ?? 0,
+    balance_value: item.balance?.value ?? 0,
     batch_number: item.batch_number,
     constituent_id: item.constituent_id,
-    date: item.date,
-    date_added: item.date_added,
-    date_modified: item.date_modified,
+    date: item.date ? new Date(item.date) : null,
+    date_added: item.date_added ? new Date(item.date_added) : null,
+    date_modified: item.date_modified ? new Date(item.date_modified) : null,
     gift_code: item.gift_code,
     gift_status: item.gift_status,
     is_anonymous: item.is_anonymous,
+    gift_aid_qualification_status: item.gift_aid_qualification_status,
     constituency: item.constituency,
     lookup_id: item.lookup_id,
-    post_date: item.post_date,
+    post_date: item.post_date ? new Date(item.post_date) : null,
     post_status: item.post_status,
     subtype: item.subtype,
     type: item.type,
-    // Flatten arrays to JSON strings
-    acknowledgements: JSON.stringify(item.acknowledgements || []),
-    fundraisers: JSON.stringify(item.fundraisers || []),
-    gift_splits: JSON.stringify(item.gift_splits || []),
-    payments: JSON.stringify(item.payments || []),
-    receipts: JSON.stringify(item.receipts || []),
-    linked_gifts: JSON.stringify(item.linked_gifts || [])
+    reference: item.reference,
+    recurring_gift_status_day: item.recurring_gift_status_date ? item.recurring_gift_status_date.d : null,
+    recurring_gift_status_month: item.recurring_gift_status_date ? item.recurring_gift_status_date.m : null,
+    recurring_gift_status_year: item.recurring_gift_status_date ? item.recurring_gift_status_date.y : null,
   };
+
+  // JSON arrays
+  out.acknowledgements = JSON.stringify(item.acknowledgements ?? []);
+  out.fundraisers = JSON.stringify(item.fundraisers ?? []);
+  out.gift_splits = JSON.stringify(item.gift_splits ?? []);
+  out.linked_gifts = JSON.stringify(item.linked_gifts ?? []);
+  out.payments = JSON.stringify(item.payments ?? []);
+  out.receipts = JSON.stringify(item.receipts ?? []);
+  out.soft_credits = JSON.stringify(item.soft_credits ?? []);
+
+  // Acknowledgements flattening
+  const MAX_ACKS = 5;
+  (item.acknowledgements ?? []).forEach((ack, i) => {
+    if (i < MAX_ACKS) {
+      out[`acknowledgement_${i + 1}_date`] = ack.date ? new Date(ack.date) : null;
+      out[`acknowledgement_${i + 1}_status`] = ack.status ?? null;
+    }
+  });
+  for (let i = (item.acknowledgements?.length || 0); i < MAX_ACKS; i++) {
+    out[`acknowledgement_${i + 1}_date`] = null;
+    out[`acknowledgement_${i + 1}_status`] = null;
+  }
+
+  // Fundraisers flattening
+  const MAX_FUNDRAISERS = 5;
+  (item.fundraisers ?? []).forEach((f, i) => {
+    if (i < MAX_FUNDRAISERS) {
+      out[`fundraiser_${i + 1}_constituent_id`] = f.constituent_id ?? null;
+      out[`fundraiser_${i + 1}_credit_amount`] = f.amount?.value ?? null;
+    }
+  });
+  for (let i = (item.fundraisers?.length || 0); i < MAX_FUNDRAISERS; i++) {
+    out[`fundraiser_${i + 1}_constituent_id`] = null;
+    out[`fundraiser_${i + 1}_credit_amount`] = null;
+  }
+
+  // Gift splits flattening
+  const MAX_SPLITS = 5;
+  (item.gift_splits ?? []).forEach((split, i) => {
+    if (i < MAX_SPLITS) {
+      out[`gift_split_${i + 1}_id`] = split.id ?? null;
+      out[`gift_split_${i + 1}_amount`] = split.amount?.value ?? null;
+      out[`gift_split_${i + 1}_appeal_id`] = split.appeal_id ?? null;
+      out[`gift_split_${i + 1}_campaign_id`] = split.campaign_id ?? null;
+      out[`gift_split_${i + 1}_fund_id`] = split.fund_id ?? null;
+    }
+  });
+  for (let i = (item.gift_splits?.length || 0); i < MAX_SPLITS; i++) {
+    out[`gift_split_${i + 1}_id`] = null;
+    out[`gift_split_${i + 1}_amount`] = null;
+    out[`gift_split_${i + 1}_appeal_id`] = null;
+    out[`gift_split_${i + 1}_campaign_id`] = null;
+    out[`gift_split_${i + 1}_fund_id`] = null;
+  }
+
+  // Linked gifts flattening
+  const MAX_LINKED = 10;
+  (item.linked_gifts ?? []).forEach((lg, i) => {
+    if (i < MAX_LINKED) {
+      out[`linked_gift_${i + 1}_id`] = lg;
+    }
+  });
+  for (let i = (item.linked_gifts?.length || 0); i < MAX_LINKED; i++) {
+    out[`linked_gift_${i + 1}_id`] = null;
+  }
+
+  // Payments flattening
+  const MAX_PAYMENTS = 5;
+  (item.payments ?? []).forEach((p, i) => {
+    if (i < MAX_PAYMENTS) {
+      out[`payment_${i + 1}_method`] = p.payment_method ?? null;
+    }
+  });
+  for (let i = (item.payments?.length || 0); i < MAX_PAYMENTS; i++) {
+    out[`payment_${i + 1}_method`] = null;
+  }
+
+  // Receipts flattening
+  const MAX_RECEIPTS = 5;
+  (item.receipts ?? []).forEach((r, i) => {
+    if (i < MAX_RECEIPTS) {
+      out[`receipt_${i + 1}_amount`] = r.amount?.value ?? null;
+      out[`receipt_${i + 1}_date`] = r.date ? new Date(r.date) : null;
+      out[`receipt_${i + 1}_number`] = r.number ?? null;
+      out[`receipt_${i + 1}_status`] = r.status ?? null;
+    }
+  });
+  for (let i = (item.receipts?.length || 0); i < MAX_RECEIPTS; i++) {
+    out[`receipt_${i + 1}_amount`] = null;
+    out[`receipt_${i + 1}_date`] = null;
+    out[`receipt_${i + 1}_number`] = null;
+    out[`receipt_${i + 1}_status`] = null;
+  }
+
+  // Soft credits flattening
+  const MAX_SOFT = 5;
+  (item.soft_credits ?? []).forEach((sc, i) => {
+    if (i < MAX_SOFT) {
+      out[`soft_credit_${i + 1}_id`] = sc.id ?? null;
+      out[`soft_credit_${i + 1}_amount`] = sc.amount?.value ?? null;
+      out[`soft_credit_${i + 1}_const_id`] = sc.constituent_id ?? null;
+      out[`soft_credit_${i + 1}_gift_id`] = sc.gift_id ?? null;
+    }
+  });
+  for (let i = (item.soft_credits?.length || 0); i < MAX_SOFT; i++) {
+    out[`soft_credit_${i + 1}_id`] = null;
+    out[`soft_credit_${i + 1}_amount`] = null;
+    out[`soft_credit_${i + 1}_const_id`] = null;
+    out[`soft_credit_${i + 1}_gift_id`] = null;
+  }
+
+  return out;
 }
 
 function mapOpportunities(item) {
   const out = {
     id: item.id,
     ask_amount: item.ask_amount ? item.ask_amount.value : 0,
-    ask_date: item.ask_date,
+    ask_date: item.ask_date ? new Date(item.ask_date) : null,
     campaign_id: item.campaign_id,
     constituent_id: item.constituent_id,
     date_added: item.date_added ? new Date(item.date_added) : null,
     date_modified: item.date_modified ? new Date(item.date_modified) : null,
     deadline: item.deadline,
     expected_amount: item.expected_amount ? item.expected_amount.value : 0,
-    expected_date: item.expected_date,
+    expected_date: item.expected_date ? new Date(item.expected_date) : null,
     funded_amount: item.funded_amount ? item.funded_amount.value : 0,
-    funded_date: item.funded_date,
+    funded_date: item.funded_date ? new Date(item.funded_date) : null,
 
     // // Flatten just the first fundraiser if present
     // fundraiser_constituent_id: firstFundraiser?.constituent_id ?? null,
@@ -301,11 +413,47 @@ function mapAppeals(item) {
     authUrl: "https://oauth2.sky.blackbaud.com/authorization"
   };
 
+  // UI update
+  function updateUIWithAuthState(hasAuth) {
+    if (hasAuth) {
+      $(".notsignedin").hide();
+      $(".signedin").show();
+
+      // Hide the connect button
+      $("#connectButton").hide();
+
+      // Authenticated... Show the Main Section
+      $("#mainSection").show();
+    } else {
+      $(".notsignedin").show();
+      $(".signedin").hide();
+
+      // Show the connect button
+      $("#connectButton").show();
+
+      // Not Authenticated... Hide the Main Section
+      $("#mainSection").hide();
+    }
+  }
+
   $(document).ready(function () {
     // Query the server for authentication status.
     $.getJSON("http://localhost:3333/status", function (status) {
       updateUIWithAuthState(status.authenticated);
     });
+
+    function updateFilters() {
+      const ep = $('#endpointSelect').val();
+      // hide all
+      $('.filter-group').hide();
+      // show only selected group
+      $(`.filter-group[data-endpoint="${ep}"]`).show();
+    }
+
+    // Dynamically Update displayed filters based on selected endpoint
+    $('#endpointSelect').on('change', updateFilters);
+    // initial
+    updateFilters();
 
     // Connect button: instruct the user to authenticate if not done.
     $("#connectButton").click(function () {
@@ -368,35 +516,19 @@ function mapAppeals(item) {
       const endGiftAmount = $("#endGiftAmountInput").val();
 
       // store in connectionData
-      const cfg = { endpoint, recordId, queryId, limit, offset, maxPages, fetchAll, name, lookupId, dateAdded,
-                    lastModified, includeInactive, searchText, sortToken, listId, fundId, eventId, constituentId,
-                    category, startDateFrom, startDateTo, fields, sort, group, statusCode, continuationToken, 
-                    postStatus, giftType, receiptStatus, acknowledgementStatus, campaignId, appealId, startGiftDate,
-                    endGiftDate, startGiftAmount, endGiftAmount
-                  };
+      const cfg = {
+        endpoint, recordId, queryId, limit, offset, maxPages, fetchAll, name, lookupId, dateAdded,
+        lastModified, includeInactive, searchText, sortToken, listId, fundId, eventId, constituentId,
+        category, startDateFrom, startDateTo, fields, sort, group, statusCode, continuationToken,
+        postStatus, giftType, receiptStatus, acknowledgementStatus, campaignId, appealId, startGiftDate,
+        endGiftDate, startGiftAmount, endGiftAmount
+      };
       tableau.connectionData = JSON.stringify(cfg);
 
       tableau.connectionName = "Blackbaud RE NXT Connector (Server-Side OAuth) - " + endpoint;
       tableau.submit();
     });
   });
-
-  // UI update
-  function updateUIWithAuthState(hasAuth) {
-    if (hasAuth) {
-      $(".notsignedin").hide();
-      $(".signedin").show();
-
-      // Hide the connect button
-      $("#connectButton").hide();
-    } else {
-      $(".notsignedin").show();
-      $(".signedin").hide();
-
-      // Show the connect button again if needed
-      $("#connectButton").show();
-    }
-  }
 
   // Define the WDC
   var myConnector = tableau.makeConnector();
@@ -423,14 +555,15 @@ function mapAppeals(item) {
       { id: "state", dataType: tableau.dataTypeEnum.string },
       { id: "address_type", dataType: tableau.dataTypeEnum.string },
       { id: "age", dataType: tableau.dataTypeEnum.int },
-      { id: "birthdate", dataType: tableau.dataTypeEnum.date },
-      { id: "birth_day", dataType: tableau.dataTypeEnum.date },
-      { id: "birth_month", dataType: tableau.dataTypeEnum.date },
-      { id: "birth_year", dataType: tableau.dataTypeEnum.date },
+      { id: "birth_day", dataType: tableau.dataTypeEnum.int },
+      { id: "birth_month", dataType: tableau.dataTypeEnum.int },
+      { id: "birth_year", dataType: tableau.dataTypeEnum.int },
       { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
       { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
       { id: "deceased", dataType: tableau.dataTypeEnum.bool },
-      { id: "deceased_date", dataType: tableau.dataTypeEnum.date },
+      { id: "deceased_date_day", dataType: tableau.dataTypeEnum.int },
+      { id: "deceased_date_month", dataType: tableau.dataTypeEnum.int },
+      { id: "deceased_date_year", dataType: tableau.dataTypeEnum.int },
       { id: "email", dataType: tableau.dataTypeEnum.string },
       { id: "email_id", dataType: tableau.dataTypeEnum.string },
       { id: "email_address", dataType: tableau.dataTypeEnum.string },
@@ -510,7 +643,7 @@ function mapAppeals(item) {
       { id: "category", dataType: tableau.dataTypeEnum.string },
       { id: "completed", dataType: tableau.dataTypeEnum.bool },
       { id: "completed_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "completed_status", dataType: tableau.dataTypeEnum.string },
+      { id: "computed_status", dataType: tableau.dataTypeEnum.string },
       { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
       { id: "date", dataType: tableau.dataTypeEnum.datetime },
       { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
@@ -536,6 +669,7 @@ function mapAppeals(item) {
 
     // Gifts Table Schema
     const giftsCols = [
+      // Scalar/top‐level fields
       { id: "id", dataType: tableau.dataTypeEnum.string },
       { id: "amount_value", dataType: tableau.dataTypeEnum.float },
       { id: "balance_value", dataType: tableau.dataTypeEnum.float },
@@ -547,31 +681,142 @@ function mapAppeals(item) {
       { id: "gift_code", dataType: tableau.dataTypeEnum.string },
       { id: "gift_status", dataType: tableau.dataTypeEnum.string },
       { id: "is_anonymous", dataType: tableau.dataTypeEnum.bool },
+      { id: "gift_aid_qualification_status", dataType: tableau.dataTypeEnum.string },
       { id: "constituency", dataType: tableau.dataTypeEnum.string },
       { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
       { id: "post_date", dataType: tableau.dataTypeEnum.datetime },
       { id: "post_status", dataType: tableau.dataTypeEnum.string },
+      { id: "reference", dataType: tableau.dataTypeEnum.string },
       { id: "subtype", dataType: tableau.dataTypeEnum.string },
       { id: "type", dataType: tableau.dataTypeEnum.string },
+      { id: "recurring_gift_status_day", dataType: tableau.dataTypeEnum.int },
+      { id: "recurring_gift_status_month", dataType: tableau.dataTypeEnum.int },
+      { id: "recurring_gift_status_year", dataType: tableau.dataTypeEnum.int },
+
+      // Raw JSON arrays
       { id: "acknowledgements", dataType: tableau.dataTypeEnum.string },
-      { id: "acknowledgement_status", dataType: tableau.dataTypeEnum.string },
       { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_amount", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_id", dataType: tableau.dataTypeEnum.string },
       { id: "gift_splits", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_amount", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_appeal_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_fund_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gifts", dataType: tableau.dataTypeEnum.string },
       { id: "payments", dataType: tableau.dataTypeEnum.string },
-      { id: "payment_method", dataType: tableau.dataTypeEnum.string },
       { id: "receipts", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_amount", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_date", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_status", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gifts", dataType: tableau.dataTypeEnum.string }
+      { id: "soft_credits", dataType: tableau.dataTypeEnum.string },
+
+      // Acknowledgements (first 5)
+      { id: "acknowledgement_1_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "acknowledgement_1_status", dataType: tableau.dataTypeEnum.string },
+      { id: "acknowledgement_2_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "acknowledgement_2_status", dataType: tableau.dataTypeEnum.string },
+      { id: "acknowledgement_3_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "acknowledgement_3_status", dataType: tableau.dataTypeEnum.string },
+      { id: "acknowledgement_4_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "acknowledgement_4_status", dataType: tableau.dataTypeEnum.string },
+      { id: "acknowledgement_5_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "acknowledgement_5_status", dataType: tableau.dataTypeEnum.string },
+
+      // Fundraisers (first 5)
+      { id: "fundraiser_1_constituent_id", dataType: tableau.dataTypeEnum.string },
+      { id: "fundraiser_1_credit_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "fundraiser_2_constituent_id", dataType: tableau.dataTypeEnum.string },
+      { id: "fundraiser_2_credit_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "fundraiser_3_constituent_id", dataType: tableau.dataTypeEnum.string },
+      { id: "fundraiser_3_credit_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "fundraiser_4_constituent_id", dataType: tableau.dataTypeEnum.string },
+      { id: "fundraiser_4_credit_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "fundraiser_5_constituent_id", dataType: tableau.dataTypeEnum.string },
+      { id: "fundraiser_5_credit_amount", dataType: tableau.dataTypeEnum.float },
+
+      // Gift Splits (first 5)
+      { id: "gift_split_1_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_1_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "gift_split_1_appeal_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_1_campaign_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_1_fund_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_2_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_2_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "gift_split_2_appeal_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_2_campaign_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_2_fund_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_3_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_3_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "gift_split_3_appeal_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_3_campaign_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_3_fund_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_4_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_4_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "gift_split_4_appeal_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_4_campaign_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_4_fund_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_5_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_5_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "gift_split_5_appeal_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_5_campaign_id", dataType: tableau.dataTypeEnum.string },
+      { id: "gift_split_5_fund_id", dataType: tableau.dataTypeEnum.string },
+
+      // Linked Gifts (first 10)
+      { id: "linked_gift_1_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_2_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_3_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_4_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_5_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_6_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_7_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_8_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_9_id", dataType: tableau.dataTypeEnum.string },
+      { id: "linked_gift_10_id", dataType: tableau.dataTypeEnum.string },
+
+      // Payments (first 5)
+      { id: "payment_1_method", dataType: tableau.dataTypeEnum.string },
+      { id: "payment_2_method", dataType: tableau.dataTypeEnum.string },
+      { id: "payment_3_method", dataType: tableau.dataTypeEnum.string },
+      { id: "payment_4_method", dataType: tableau.dataTypeEnum.string },
+      { id: "payment_5_method", dataType: tableau.dataTypeEnum.string },
+
+      // Receipts (first 5)
+      { id: "receipt_1_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_1_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "receipt_1_number", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_1_status", dataType: tableau.dataTypeEnum.string },
+      { id: "receipt_2_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_2_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "receipt_2_number", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_2_status", dataType: tableau.dataTypeEnum.string },
+      { id: "receipt_3_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_3_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "receipt_3_number", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_3_status", dataType: tableau.dataTypeEnum.string },
+      { id: "receipt_4_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_4_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "receipt_4_number", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_4_status", dataType: tableau.dataTypeEnum.string },
+      { id: "receipt_5_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_5_date", dataType: tableau.dataTypeEnum.datetime },
+      { id: "receipt_5_number", dataType: tableau.dataTypeEnum.float },
+      { id: "receipt_5_status", dataType: tableau.dataTypeEnum.string },
+
+      // Soft Credits (first 5)
+      { id: "soft_credit_1_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_1_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "soft_credit_1_const_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_1_gift_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_2_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_2_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "soft_credit_2_const_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_2_gift_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_3_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_3_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "soft_credit_3_const_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_3_gift_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_4_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_4_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "soft_credit_4_const_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_4_gift_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_5_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_5_amount", dataType: tableau.dataTypeEnum.float },
+      { id: "soft_credit_5_const_id", dataType: tableau.dataTypeEnum.string },
+      { id: "soft_credit_5_gift_id", dataType: tableau.dataTypeEnum.string }
     ];
+
     const giftsTable = {
       id: "gifts",
       alias: "Raiser's Edge NXT Gifts V1",
@@ -769,7 +1014,7 @@ function mapAppeals(item) {
       case 'campaigns':
         schemaCallback([campaignsTable]);
         break;
-  
+
       case 'appeals':
         schemaCallback([appealsTable]);
         break;
@@ -793,24 +1038,24 @@ function mapAppeals(item) {
     let url = `http://localhost:3333/getBlackbaudData?endpoint=${tableId}`;
     // add user typed parameters
     if (cfg.recordId) url += `&id=${cfg.recordId}`;
-    if (cfg.queryId) url += `&queryId=${cfg.queryId}`;
+    if (cfg.queryId) url += `&query_id=${cfg.queryId}`;
     if (cfg.limit) url += `&limit=${cfg.limit}`;
     if (cfg.offset) url += `&offset=${cfg.offset}`;
-    if (cfg.maxPages) url += `&maxPages=${cfg.maxPages}`;
+    if (cfg.maxPages) url += `&max_pages=${cfg.maxPages}`;
     if (cfg.name) url += `&name=${cfg.name}`;
-    if (cfg.lookupId) url += `&lookupId=${cfg.lookupId}`;
-    if (cfg.dateAdded) url += `&dateAdded=${cfg.dateAdded}`;
-    if (cfg.lastModified) url += `&lastModified=${cfg.lastModified}`;
-    if (cfg.includeInactive) url += `&includeInactive=${cfg.includeInactive}`;
-    if (cfg.searchText) url += `&searchText=${cfg.searchText}`;
-    if (cfg.sortToken) url += `&sortToken=${cfg.sortToken}`;
-    if (cfg.listId) url += `&listId=${cfg.listId}`;
-    if (cfg.fundId) url += `&fundId=${cfg.fundId}`;
-    if (cfg.eventId) url += `&eventId=${cfg.eventId}`;
-    if (cfg.constituentId) url += `&constituentId=${cfg.constituentId}`;
+    if (cfg.lookupId) url += `&lookup_id=${cfg.lookupId}`;
+    if (cfg.dateAdded) url += `&date_added=${cfg.dateAdded}`;
+    if (cfg.lastModified) url += `&last_modified=${cfg.lastModified}`;
+    if (cfg.includeInactive) url += `&include_inactive=${cfg.includeInactive}`;
+    if (cfg.searchText) url += `&search_text=${cfg.searchText}`;
+    if (cfg.sortToken) url += `&sort_token=${cfg.sortToken}`;
+    if (cfg.listId) url += `&list_id=${cfg.listId}`;
+    if (cfg.fundId) url += `&fund_id=${cfg.fundId}`;
+    if (cfg.eventId) url += `&event_id=${cfg.eventId}`;
+    if (cfg.constituentId) url += `&constituent_id=${cfg.constituentId}`;
     if (cfg.category) url += `&category=${cfg.category}`;
-    if (cfg.startDateFrom) url += `&startDateFrom=${cfg.startDateFrom}`;
-    if (cfg.startDateTo) url += `&startDateTo=${cfg.startDateTo}`;
+    if (cfg.startDateFrom) url += `&start_date_from=${cfg.startDateFrom}`;
+    if (cfg.startDateTo) url += `&start_date_to=${cfg.startDateTo}`;
     if (cfg.fields) url += `&fields=${cfg.fields}`;
     if (cfg.sort) url += `&sort=${cfg.sort}`;
     if (cfg.group) url += `&group=${cfg.group}`;
