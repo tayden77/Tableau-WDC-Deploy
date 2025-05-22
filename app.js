@@ -324,7 +324,7 @@ app.get('/getBlackbaudData', async (req, res) => {
       });
     } else {
       const url = `https://api.sky.blackbaud.com/constituent/v1/actions?`;
-      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
+      if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`; // nextlink includes a sort token
       if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
       if (sortToken) url += `sort_token=${encodeURIComponent(sortToken)}&`;
       if (statusCode) url += `status_code=${encodeURIComponent(statusCode)}&`;
