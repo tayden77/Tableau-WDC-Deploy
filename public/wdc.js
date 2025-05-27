@@ -109,6 +109,7 @@ function mapActions(item) {
     end_time: item.end_time,
     location: item.location,
     outcome: item.outcome,
+    opportunity_id: item.opportunity_id,
     priority: item.priority,
     start_time: item.start_time,
     status: item.status,
@@ -318,7 +319,7 @@ function mapOpportunities(item) {
       out[`linked_gift_${i + 1}`] = j;
     }
   });
-  // gill unused fields with null
+  // fill unused fields with null
   for (let i = (item.linked_gifts ?? []).length; i < MAX_GIFTS; i++) {
     out[`linked_gift_${i + 1}`] = null;
   }
@@ -654,6 +655,7 @@ function mapAppeals(item) {
       { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
       { id: "location", dataType: tableau.dataTypeEnum.string },
       { id: "outcome", dataType: tableau.dataTypeEnum.string },
+      { id: "opportunity_id", dataType: tableau.dataTypeEnum.string },
       { id: "priority", dataType: tableau.dataTypeEnum.string },
       { id: "start_time", dataType: tableau.dataTypeEnum.string },
       { id: "status", dataType: tableau.dataTypeEnum.string },
