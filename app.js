@@ -2,15 +2,11 @@
 // Module Dependencies & Variables
 // -------------------------------------------------- //
 require('dotenv').config();
-const clientID = process.env.CLIENT_ID;
-const clientSecret = process.env.CLIENT_SECRET;
-const subscriptionKey = process.env.SUBSCRIPTION_KEY;
 
-var cookieParser = require('cookie-parser');
-var http = require('http');
-var request = require('request');
-var config = require('./config.js');
-
+const config = require('./config.js');
+const cookieParser = require('cookie-parser');
+const http = require('http');
+const request = require('request');
 const rp = require('request-promise-native');
 const cors = require('cors');
 const fs = require('fs');
@@ -19,11 +15,29 @@ const path = require('path');
 const express = require('express');
 const app = express();
 const { promisify } = require('util');
-const requestPromise = promisify(request);
 const { parse: parseCsv } = require('csv-parse/sync'); // Requires: npm i csv-parse
 const { v4: uuidv4 } = require('uuid'); // Requires: npm i uuid
 const { stringify } = require('csv-stringify'); // Requires: npm i csv-stringify
 const { max } = require('moment');
+
+const requestPromise = promisify(request);
+
+// ---- Secrets (read once and never re-declare) ----
+const clientID = process.env.CLIENT_ID || config.CLIENT_ID;
+const clientSecret = process.env.CLIENT_SECRET || config.CLIENT_SECRET;
+const subscriptionKey = process.env.SUBSCRIPTION_KEY || config.SUBSCRIPTION_KEY;
+
+// ---- Other config values ----
+const PORT = process.env.PORT || config.PORT || 3333;
+const HOSTPATH = process.env.HOSTPATH || config.HOSTPATH || 'http://localhost';
+
+// -------------------------
+// Express App
+// -------------------------
+app.set('port', PORT);
+app.use(cookieParser());
+app.use(express.static(__dirname + '/public'));
+app.use(cors());
 
 // -------------------------------------------------- //
 // Helper Functions
@@ -144,19 +158,6 @@ async function fetchMultipleRecords(url, subscriptionKey, allItems = [], pageCou
   
   return allItems;
 }
-
-
-// Express app variables and dependencies
-app.set('port', (process.env.PORT || config.PORT));
-app.use(cookieParser());
-app.use(express.static(__dirname + '/public'));
-app.use(cors());
-
-// API Environment variables and OAuth secrets
-var clientID = process.env.BLACKBAUD_CLIENT_ID || config.CLIENT_ID;
-var clientSecret = process.env.BLACKBAUD_CLIENT_SECRET || config.CLIENT_SECRET;
-var subscriptionKey = process.env.BLACKBAUD_SUBSCRIPTION_KEY || config.SUBSCRIPTION_KEY;
-var redirectURI = config.HOSTPATH + ":" + config.PORT + config.REDIRECT_PATH;
 
 // -------------------TEST LOGGING-------------------- //
 // console.log("Client ID: " + clientID);
