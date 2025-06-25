@@ -1,52 +1,421 @@
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="utf-8">
-        <title>Raiser's Edge Connector</title>
-        <meta http-equiv="Cache-Control" content="no-store" />
-        <!-- Latest compiled and minified CSS -->
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+<html lang="en">
 
-        <!-- Optional theme -->
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap-theme.min.css">
-        <!-- Latest compiled and minified JavaScript -->
-        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js" type="text/javascript"></script>
+<head>
+  <meta charset="utf-8">
+  <title>Raiser's Edge Connector</title>
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-        <!-- Latest WDC Library -->
-        <script src="https://connectors.tableau.com/libs/tableauwdc-2.2.latest.js" type="text/javascript"></script>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
 
-        <!-- Cookie Library to read cookies -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/js-cookie/2.0.2/js.cookie.min.js" type="text/javascript"></script>
+  <!-- jQuery (needed for your WDC JS if you use it) -->
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
 
-        <!-- Our WDC JS -->
-        <script src="./wdc.js" type="text/javascript"></script>
-    </head>
-    <body>
-        <div style="margin: auto; text-align: center; margin-top: 50px; max-width: 300px;">
-            <!-- These labels will toggle depending on whether the user is authenticated or not -->
-            <p class="signedin">You are signed in!</p>
-            <p class="notsignedin">You are not signed in, please click below to sign in to your Blackbaud account.</p>
+  <!-- Bootstrap 5 JS bundle -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
-            <!-- The connect to Blackbaud button will have a link added to it in the js -->
-            <button id="connectButton" class="btn btn-primary">Connect to Blackbaud</button>
-            <br /><br />
+  <!-- Tableau WDC library -->
+  <script src="https://connectors.tableau.com/libs/tableauwdc-2.2.latest.js"></script>
+  <!-- Cookie helper -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/js-cookie/2.0.2/js.cookie.min.js"></script>
+  <!-- Your WDC code -->
+  <script src="./wdc.js"></script>
+</head>
 
-            <!-- This button will pull the API data once the user is authenticated -->
-             <button id="getDataButton" class="btn btn-success">Get Data</button>
+<body>
+  <!-- ===== AUTH SECTION (always visible until signed in) ===== -->
+  <div id="authSection" class="text-center my-5">
+    <p class="signedin mb-2">You are signed in! Open in Tableau Desktop.</p>
+    <p class="notsignedin mb-3">
+      You are not signed in, please open a browser outside of Tableau and click below to sign in to your Blackbaud
+      account. Once you've authenticated, remember to open in Tableau Desktop!
+    </p>
+    <button id="connectButton" class="btn btn-primary">Connect to Blackbaud</button>
+  </div>
 
-            <br /><br />
-             <label for="endpointSelect">Select Endpoint:</label>
-             <select id="endpointSelect">
-                <option value="constituents">Constituents</option>
-                <option value="gifts">Gifts</option>
-                <!-- add more endpoints here -->
-             </select>
-
-             <label for="pageLimit">Max Pages:</label>
-             <input type="number" id="pageLimit" value="2" />
-
-             <label for="startDate">Start Date:</label>
-             <input type="date" id="startDate" />
+  <!-- ===== MAIN SECTION ===== -->
+  <div id="mainSection" style="display: none;">
+    <div class="container">
+      <!-- Row 1: Data Selection -->
+      <div class="row">
+        <!-- Column 1: Endpoint selector -->
+        <div class="col-md-4 mb-3">
+          <h5>Data Selection</h5>
+          <div class="mb-2">
+            <label for="endpointSelect" class="form-label">Endpoint</label>
+            <select id="endpointSelect" class="form-select">
+              <option value="constituents">Constituents</option>
+              <option value="actions">Actions</option>
+              <option value="gifts">Gifts</option>
+              <option value="funds">Funds</option>
+              <option value="opportunities">Opportunities</option>
+              <option value="events">Events</option>
+              <option value="campaigns">Campaigns</option>
+              <option value="appeals">Appeals</option>
+              <option value="query">Dynamic Query</option>
+            </select>
+          </div>
         </div>
-    </body>
+
+        <!-- Column 2: Accordion options -->
+        <div class="col-md-4 mb-3">
+          <h5>Options</h5>
+          <div class="accordion" id="wdcOptions">
+            <!-- Single record -->
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="headingOne">
+                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne"
+                  aria-expanded="true" aria-controls="collapseOne">
+                  Single Record Selection
+                </button>
+              </h2>
+              <div id="collapseOne" class="accordion-collapse collapse show" aria-labelledby="headingOne"
+                data-bs-parent="#wdcOptions">
+                <div class="accordion-body">
+                  <label for="recordIdInput" class="form-label">Record ID (optional)</label>
+                  <input type="text" id="recordIdInput" class="form-control" placeholder="e.g. 123" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Multi-record -->
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="headingTwo">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
+                  Multi-Record Selection
+                </button>
+              </h2>
+              <div id="collapseTwo" class="accordion-collapse collapse" aria-labelledby="headingTwo"
+                data-bs-parent="#wdcOptions">
+                <div class="accordion-body">
+                  <div class="mb-2">
+                    <label for="maxPagesInput" class="form-label">Number of Pages (Optional)</label>
+                    <input type="number" id="maxPagesInput" class="form-control" placeholder="Default 1 Page" />
+                  </div>
+                  <div class="mb-2">
+                    <label for="limitInput" class="form-label">Records Per Page (Optional)</label>
+                    <input type="number" id="limitInput" class="form-control" placeholder="Default 500 (Max 5000)" />
+                  </div>
+                  <div class="mb-2">
+                    <label for="offsetInput" class="form-label">Offset (Optional)</label>
+                    <input type="number" id="offsetInput" class="form-control" placeholder="Default 0" />
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="fetchAllRecords" />
+                    <label class="form-check-label" for="fetchAllRecords">
+                      Fetch all records (ignore limit/offset)
+                    </label>
+                  </div>
+                  <label for="note" class="form-label">Note: 2 pages of 500 records per page would be a limit of 1000
+                    records</label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Query -->
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="headingThree">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
+                  Dynamic Query
+                </button>
+              </h2>
+              <div id="collapseThree" class="accordion-collapse collapse" aria-labelledby="headingThree"
+                data-bs-parent="#wdcOptions">
+                <div class="accordion-body">
+                  <label for="queryIdInput" class="form-label">Query ID</label>
+                  <input type="text" id="queryIdInput" class="form-control" placeholder="e.g. 1234" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Column 3: Filters -->
+        <div class="col-md-4 mb-3">
+          <h5>Filters</h5>
+          <!-- Constituents Endpoint Filters -->
+          <div class="filter-group" data-endpoint="constituents" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeInactiveConstituents" />
+              <label class="form-check-label" for="includeInactiveConstituents">
+                Include Inactive Records?
+              </label>
+            </div>
+          </div>
+
+          <!-- Actions Endpoint Filters -->
+          <div class="filter-group" data-endpoint="actions" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" placeholder="YYYY-MM-DD" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" placeholder="YYYY-MM-DD" />
+            </div>
+            <div class="mb-2">
+              <label for="statusCodeInput" class="form-label">Status Code</label>
+              <input type="text" id="statusCodeInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="listIdInput" class="form-label">List ID</label>
+              <input type="text" id="listIdInput" class="form-control" />
+            </div>
+          </div>
+
+          <!-- Gifts Endpoint Filters -->
+          <div class="filter-group" data-endpoint="gifts" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" placeholder="YYYY-MM-DD" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" placeholder="YYYY-MM-DD" />
+            </div>
+            <div class="mb-2">
+              <label for="sortTokenInput" class="form-label">Sort Token</label>
+              <input type="text" id="sortTokenInput" class="form-control" placeholder="Hard to find?" />
+            </div>
+            <div class="mb-2">
+              <label for="constituentIdInput" class="form-label">Constituent ID</label>
+              <input type="text" id="constituentIdInput" class="form-control" placeholder="E.G. 395973" />
+            </div>
+            <div class="mb-2">
+              <label for="postStatusInput" class="form-label">Post Status</label>
+              <input type="text" id="postStatusInput" class="form-control" placeholder="E.G. Posted, DoNotPost" />
+            </div>
+            <div class="mb-2">
+              <label for="giftTypeInput" class="form-label">Gift Type</label>
+              <input type="text" id="giftTypeInput" class="form-control" placeholder="E.G. Donation, GiftInKind" />
+            </div>
+            <div class="mb-2">
+              <label for="receiptStatusInput" class="form-label">Receipt Status</label>
+              <input type="text" id="receiptStatusInput" class="form-control" placeholder="Unused?" />
+            </div>
+            <div class="mb-2">
+              <label for="acknowledgementStatusInput" class="form-label">Acknowledgement Status</label>
+              <input type="text" id="acknowledgementStatusInput" class="form-control" placeholder="Unused?" />
+            </div>
+            <div class="mb-2">
+              <label for="campaignIdInput" class="form-label">Campaign ID</label>
+              <input type="text" id="campaignIdInput" class="form-control" placeholder="outside of this table" />
+            </div>
+            <div class="mb-2">
+              <label for="fundIdInput" class="form-label">Fund ID</label>
+              <input type="text" id="fundIdInput" class="form-control" placeholder="outside of this table" />
+            </div>
+            <div class="mb-2">
+              <label for="appealIdInput" class="form-label">Appeal ID</label>
+              <input type="text" id="appealIdInput" class="form-control" placeholder="outside of this table" />
+            </div>
+            <div class="mb-2">
+              <label for="startGiftDateInput" class="form-label">Start Gift Date</label>
+              <input type="text" id="startGiftDateInput" class="form-control" placeholder="YYYY-MM-DD" />
+            </div>
+            <div class="mb-2">
+              <label for="endGiftDateInput" class="form-label">End Gift Date</label>
+              <input type="text" id="endGiftDateInput" class="form-control" placeholder="YYYY-MM-DD" />
+            </div>
+            <div class="mb-2">
+              <label for="startGiftAmountInput" class="form-label">Start Gift Amount</label>
+              <input type="text" id="startGiftAmountInput" class="form-control" placeholder="E.G. 1234.56" />
+            </div>
+            <div class="mb-2">
+              <label for="endGiftAmountInput" class="form-label">End Gift Amount</label>
+              <input type="text" id="endGiftAmountInput" class="form-control" placeholder="E.G. 1234.56" />
+            </div>
+            <div class="mb-2">
+              <label for="listIdInput" class="form-label">List ID</label>
+              <input type="text" id="listIdInput" class="form-control" placeholder="?outside of this table?" />
+            </div>
+            <div class="mb-2">
+              <label for="sortInput" class="form-label">Sort</label>
+              <input type="text" id="sortInput" class="form-control" placeholder="?outside of this table?" />
+            </div>
+          </div>
+
+          <!-- Funds Endpoint Filters -->
+          <div class="filter-group" data-endpoint="funds" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="sortTokenInput" class="form-label">Sort Token</label>
+              <input type="text" id="sortTokenInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="fundIdInput" class="form-label">Fund ID</label>
+              <input type="text" id="fundIdInput" class="form-control" />
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeInactiveFunds" />
+              <label class="form-check-label" for="includeInactiveFunds">
+                Include Inactive Records?
+              </label>
+            </div>
+          </div>
+
+          <!-- Campaigns Endpoint Filters -->
+          <div class="filter-group" data-endpoint="campaigns" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="sortTokenInput" class="form-label">Sort Token</label>
+              <input type="text" id="sortTokenInput" class="form-control" />
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeInactiveCampaigns" />
+              <label class="form-check-label" for="includeInactiveCampaigns">
+                Include Inactive Records?
+              </label>
+            </div>
+          </div>
+
+          <!-- Appeals Endpoint Filters -->
+          <div class="filter-group" data-endpoint="appeals" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="sortTokenInput" class="form-label">Sort Token</label>
+              <input type="text" id="sortTokenInput" class="form-control" />
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeInactiveAppeals" />
+              <label class="form-check-label" for="includeInactiveAppeals">
+                Include Inactive Records?
+              </label>
+            </div>
+          </div>
+
+          <!-- Opportunity Endpoint Filters -->
+          <div class="filter-group" data-endpoint="opportunities" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="searchTextInput" class="form-label">Search Text</label>
+              <input type="text" id="searchTextInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="sortTokenInput" class="form-label">Sort Token</label>
+              <input type="text" id="sortTokenInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="constituentIdInput" class="form-label">Constituent ID</label>
+              <input type="text" id="constituentIdInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="listIdInput" class="form-label">List ID</label>
+              <input type="text" id="listIdInput" class="form-control" />
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeInactiveOpportunities" />
+              <label class="form-check-label" for="includeInactiveOpportunities">
+                Include Inactive Records?
+              </label>
+            </div>
+          </div>
+
+          <!-- Events Endpoint Filters -->
+          <div class="filter-group" data-endpoint="events" style="display:none">
+            <!-- COPY PASTE AVAILABLE FILTERS -->
+            <div class="mb-2">
+              <label for="nameInput" class="form-label">Name</label>
+              <input type="text" id="nameInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lookupIdInput" class="form-label">Lookup ID</label>
+              <input type="text" id="lookupIdInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="categoryInput" class="form-label">Category</label>
+              <input type="text" id="categoryInput" class="form-control" />
+            </div>
+            <div class="mb-2"> <!-- NEEDS TO BE TESTED -->
+              <label for="eventIdInput" class="form-label">Event ID</label>
+              <input type="text" id="eventIdInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="startDateFromInput" class="form-label">Start Date From</label>
+              <input type="text" id="startDateFromInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="startDateToInput" class="form-label">Start Date To</label>
+              <input type="text" id="startDateToInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="dateAddedInput" class="form-label">Date Added</label>
+              <input type="text" id="dateAddedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lastModifiedInput" class="form-label">Last Modified</label>
+              <input type="text" id="lastModifiedInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="fieldsInput" class="form-label">Fields</label>
+              <input type="text" id="fieldsInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="sortInput" class="form-label">Sort</label>
+              <input type="text" id="sortInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="groupInput" class="form-label">Group</label>
+              <input type="text" id="groupInput" class="form-control" />
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="includeInactiveEvents" />
+              <label class="form-check-label" for="includeInactiveEvents">
+                Include Inactive Records?
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2: Get Data -->
+      <div class="row mt-4">
+        <div class="col text-center">
+          <button id="getDataButton" class="btn btn-success btn-lg">
+            Get Data
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
 </html>
