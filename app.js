@@ -1,6 +1,11 @@
 // -------------------------------------------------- //
 // Module Dependencies & Variables
 // -------------------------------------------------- //
+require('dotenv').config();
+const clientID = process.env.CLIENT_ID;
+const clientSecret = process.env.CLIENT_SECRET;
+const subscriptionKey = process.env.SUBSCRIPTION_KEY;
+
 var cookieParser = require('cookie-parser');
 var http = require('http');
 var request = require('request');
