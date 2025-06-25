@@ -102,8 +102,8 @@ function mapActions(item) {
     computed_status: item.computed_status,
     constituent_id: item.constituent_id,
     date: item.date ? new Date(item.date) : null,
-    date_added: item.date_added ? new Date(item.date_added) : null,
-    date_modified: item.date_modified ? new Date(item.date_modified) : null,
+    date_added: item.date_added ? new Date(item.date_added).toISOString() : null,
+    date_modified: item.date_modified ? new Date(item.date_modified).toISOString() : null,
     description: item.description,
     direction: item.direction,
     end_time: item.end_time,
@@ -364,7 +364,7 @@ function mapFunds(item) {
   return {
     id: item.id,
     category: item.category,
-    date_added: item.date_added ? new Date(item.start_date) : null,
+    date_added: item.date_added ? new Date(item.date_added) : null,
     date_modified: item.date_modified ? new Date(item.date_modified) : null,
     description: item.description,
     end_date: item.end_date ? new Date(item.end_date) : null,
@@ -488,9 +488,10 @@ function mapAppeals(item) {
       const fetchAll = $("#fetchAllRecords").is(":checked");
       const name = $("#nameInput").val();
       const lookupId = $("#lookupIdInput").val();
-      const dateAdded = $("#dateAddedInput").val();
+      const dateAddedRaw = $("#dateAddedInput").val().trim();
+      const dateAdded    = dateAddedRaw || null;   
       const lastModified = $("#lastModifiedInput").val();
-      const includeInactive = $("#includeInactiveInput").is(":checked");
+      const includeInactive = $(`#includeInactive${endpoint.charAt(0).toUpperCase() + endpoint.slice(1)}`).is(":checked");
       const searchText = $("#searchTextInput").val();
       const sortToken = $("#sortTokenInput").val();
       const listId = $("#listIdInput").val();
@@ -1030,6 +1031,14 @@ function mapAppeals(item) {
 
   // Retrieve Table Data
   myConnector.getData = function (table, doneCallback) {
+    // Extract the Tableau run phase
+    const isGather = tableau.phase === tableau.phaseEnum.gatherDataPhase;
+
+    if (tableau.phase === tableau.phaseEnum.interactivePhase) {
+      doneCallback();
+      return;
+    }
+
     // Parse the user's chosen cfg from tableau.connectionData
     const cfg = JSON.parse(tableau.connectionData);
     // e.g., { endpoint: "constituents", recordId: "123", limit: "500", offset: "0", maxPages: "2", etc... }
@@ -1048,7 +1057,7 @@ function mapAppeals(item) {
     if (cfg.lookupId) url += `&lookup_id=${cfg.lookupId}`;
     if (cfg.dateAdded) url += `&date_added=${cfg.dateAdded}`;
     if (cfg.lastModified) url += `&last_modified=${cfg.lastModified}`;
-    if (cfg.includeInactive) url += `&include_inactive=${cfg.includeInactive}`;
+    if (cfg.includeInactive) url += `&include_inactive=true`;
     if (cfg.searchText) url += `&search_text=${cfg.searchText}`;
     if (cfg.sortToken) url += `&sort_token=${cfg.sortToken}`;
     if (cfg.listId) url += `&list_id=${cfg.listId}`;
@@ -1107,275 +1116,215 @@ function mapAppeals(item) {
       fetchChunk();
       return;
     }
-    // Fetch all records for static tables
-    if (cfg.endpoint === 'constituents' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
 
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
+    // Fetch all constituent records
+    if (tableId === 'constituents') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapConstituents);   
+          const MAX_ROWS = 10000;                             
+
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));   
+          }
+          doneCallback();
+        })
+        .catch(e => tableau.abortWithError(e));
+      return;
+    }
+
+    // Fetch all actions records (may not finish due to over 4 million records)
+    if (tableId === 'actions') {
+
+      /*------------------------------------------------------------------
+        0)  Don’t pull data during schema-gather / preview in Tableau UI
+      ------------------------------------------------------------------*/
+      if (tableau.phase === tableau.phaseEnum.interactivePhase) {
+        doneCallback();
+        return;
+      }
+    
+      /*------------------------------------------------------------------
+        1)  SINGLE RECORD
+      ------------------------------------------------------------------*/
+      if (cfg.recordId && cfg.recordId.trim() !== '') {
+        /*  url already includes &id=… because it was added in the
+            generic builder a few lines above.                         */
+        fetch(url)
+          .then(r => r.json())
+          .then(data => {
+            table.appendRows([ mapActions(data.value[0]) ] );   // value is a 1-element array
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
+    
+      /*------------------------------------------------------------------
+        2)  BULK DOWNLOAD  (cfg.fetchAll === true)
+      ------------------------------------------------------------------*/
+      if (cfg.fetchAll) {
+        const CHUNK = cfg.chunkSize ?? 15000;
+        let page = 0;
+        let bulkId;
+    
+        // --- init ---
+        fetch('http://localhost:3333/bulk/actions')
           .then(r => {
-            if (!r.ok) throw new Error(`Server said ${r.status}: ${r.statusText}`);
+            if (!r.ok) throw new Error(`Bulk init failed: ${r.statusText}`);
             return r.json();
           })
-          .then(data => {
-            // Build an array of rows
-            const rows = data.value.map(mapConstituents);
-            // append rows
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-              // if we received the full batch, ask for the next one
-              if (rows.length === CHUNK) {
-                fetchBatch();
+          .then(init => {
+            bulkId = init.id;
+            console.log(`Bulk init OK, id=${bulkId}, totalRows=${init.rows}`);
+            fetchChunk();
+          })
+          .catch(err => tableau.abortWithError('Bulk init failed: ' + err));
+    
+        // --- loop ---
+        function fetchChunk() {
+          fetch(`http://localhost:3333/bulk/actions/chunk?id=${bulkId}&page=${page}&chunkSize=${CHUNK}`)
+            .then(r => r.json())
+            .then(obj => {
+              if (!obj.value.length) return doneCallback();
+    
+              table.appendRows( obj.value.map(mapActions) );
+    
+              // keep paging until slice < CHUNK
+              if (obj.value.length === CHUNK) {
+                page += 1;
+                fetchChunk();
               } else {
                 doneCallback();
               }
-            } else {
-              // Received no rows
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
+            })
+            .catch(err => tableau.abortWithError('Chunk fetch failed: ' + err));
+        }
+        return;
       }
-      fetchBatch();
-      return;
-    }
-
-    if (cfg.endpoint === 'actions' && cfg.fetchAll) {
-      const CHUNK = 15000;
-      let page = 0;
-      let bulkId;
-
-      // 1) initialize
-      fetch(`http://localhost:3333/bulk/actions`)
-        .then(r => {
-          if (!r.ok) throw new Error(`Bulk init failed: ${r.statusText}`);
-          return r.json();
+    
+      /*------------------------------------------------------------------
+        3)  PAGED LIST  (default)
+      ------------------------------------------------------------------*/
+      fetch(url)                              // url already has limit/offset/filters
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapActions);
+          const MAX_ROWS = 10000;             // avoid 64 k row burst limits
+    
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));
+          }
+          doneCallback();
         })
-        .then(init => {
-          bulkId = init.id;
-          console.log(`Bulk init OK, id=${bulkId}, totalRows=${init.rows}`);
-          fetchChunk();    // now start paging
+        .catch(e => tableau.abortWithError(e));
+    
+      return;
+    }
+
+    // Fetch all gift records
+    if (tableId === 'gifts') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapGifts);   
+          const MAX_ROWS = 10000;                             
+
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));     
+          }
+          doneCallback();
         })
-        .catch(err => tableau.abortWithError('Bulk init failed: ' + err));
-
-      function fetchChunk() {
-        console.log(`Fetching bulk/actions/chunk?id=${bulkId}&page=${page}`);
-        fetch(
-          `http://localhost:3333/bulk/actions/chunk?id=${bulkId}` +
-          `&page=${page}&chunkSize=${CHUNK}`
-        )
-          .then(r => {
-            if (!r.ok) throw new Error(`Chunk ${page} HTTP ${r.status}`);
-            return r.json();
-          })
-          .then(obj => {
-            if (obj.value.length) {
-              table.appendRows(obj.value);
-              page += 1;
-              fetchChunk();
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(err => tableau.abortWithError('Chunk fetch failed: ' + err));
-      }
-
+        .catch(e => tableau.abortWithError(e));
       return;
     }
 
-    if (cfg.endpoint === 'gifts' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
+    // Fetch all opportunities records
+    if (tableId === 'opportunities') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapOpportunities);   
+          const MAX_ROWS = 10000;                             
 
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
-          .then(r => r.json())
-          .then(data => {
-            // build an array of rows
-            const rows = data.value.map(mapGifts);
-
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-
-              if (rows.length === CHUNK) {
-                fetchBatch();
-              } else {
-                doneCallback();
-              }
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
-      }
-
-      fetchBatch();
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));     
+          }
+          doneCallback();
+        })
+        .catch(e => tableau.abortWithError(e));
       return;
     }
 
-    if (cfg.endpoint === 'opportunities' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
+    // Fetch all events records
+    if (tableId === 'events') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapEvents);   
+          const MAX_ROWS = 10000;                            
 
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
-          .then(r => r.json())
-          .then(data => {
-            const rows = data.value.map(mapOpportunities);
-
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-
-              if (rows.length === CHUNK) {
-                fetchBatch();
-              } else {
-                doneCallback();
-              }
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
-      }
-
-      fetchBatch();
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));   
+          }
+          doneCallback();
+        })
+        .catch(e => tableau.abortWithError(e));
       return;
     }
 
-    if (cfg.endpoint === 'events' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
+    // Fetch all funds records
+    if (tableId === 'funds') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapFunds);  
+          const MAX_ROWS = 10000;                           
 
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
-          .then(r => r.json())
-          .then(data => {
-            // build an array of rows
-            const rows = data.value.map(mapEvents);
-
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-
-              if (rows.length === CHUNK) {
-                fetchBatch();
-              } else {
-                doneCallback();
-              }
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
-      }
-
-      fetchBatch();
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));     
+          }
+          doneCallback();
+        })
+        .catch(e => tableau.abortWithError(e));
       return;
     }
 
-    if (cfg.endpoint === 'funds' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
+    // Fetch all campaigns records
+    if (tableId === 'campaigns') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapCampaigns);   
+          const MAX_ROWS = 10000;                            
 
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
-          .then(r => r.json())
-          .then(data => {
-            // build an array of rows
-            const rows = data.value.map(mapFunds);
-
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-
-              if (rows.length === CHUNK) {
-                fetchBatch();
-              } else {
-                doneCallback();
-              }
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
-      }
-
-      fetchBatch();
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));    
+          }
+          doneCallback();
+        })
+        .catch(e => tableau.abortWithError(e));
       return;
     }
 
-    if (cfg.endpoint === 'campaigns' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
+    // Fetch all appeals records
+    if (tableId === 'appeals') {
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          const rows = data.value.map(mapAppeals);   
+          const MAX_ROWS = 10000;                             
 
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
-          .then(r => r.json())
-          .then(data => {
-            // build an array of rows
-            const rows = data.value.map(mapCampaigns);
-
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-
-              if (rows.length === CHUNK) {
-                fetchBatch();
-              } else {
-                doneCallback();
-              }
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
-      }
-
-      fetchBatch();
+          for (let i = 0; i < rows.length; i += MAX_ROWS) {
+            table.appendRows(rows.slice(i, i + MAX_ROWS));    
+          }
+          doneCallback();
+        })
+        .catch(e => tableau.abortWithError(e));
       return;
     }
 
-    if (cfg.endpoint === 'appeals' && cfg.fetchAll) {
-      const CHUNK = 5000;
-      let offset = 0;
-
-      function fetchBatch() {
-        const batchUrl = `${url}&limit=${CHUNK}&offset=${offset}`;
-        fetch(batchUrl)
-          .then(r => r.json())
-          .then(data => {
-            // build an array of rows
-            const rows = data.value.map(mapAppeals);
-
-            if (rows.length) {
-              table.appendRows(rows);
-              offset += CHUNK;
-
-              if (rows.length === CHUNK) {
-                fetchBatch();
-              } else {
-                doneCallback();
-              }
-            } else {
-              doneCallback();
-            }
-          })
-          .catch(e => tableau.abortWithError("Chunk fetch failed: " + e));
-      }
-
-      fetchBatch();
-      return;
-    }
     // Single-page fetch for static tables
     else if (tableId === 'constituents') {
       fetch(url)

@@ -42,6 +42,11 @@ function csvHeader(csvText) {
   return csvText.split('\n')[0].trim().split(',');
 }
 
+function toBool(v, fallback = false) {
+  if (v === undefined) return fallback;
+  return String(v).toLowerCase() === 'true';
+}
+
 // Ensure the tokens remain valid on long calls after they expire
 async function ensureValidToken() {
   if (Date.now() >= tokenExpiry - 60_000) {
@@ -116,6 +121,7 @@ async function fetchMultipleRecords(url, subscriptionKey, allItems = [], pageCou
   }
 
   const data = JSON.parse(resp.body);
+  if (pageCount === 0) console.log('[gift] first page rows', data.value.length);
   if (Array.isArray(data.value) && data.value.length) {
     allItems.push(...data.value);
   }
@@ -125,12 +131,12 @@ async function fetchMultipleRecords(url, subscriptionKey, allItems = [], pageCou
     const cont = new URL(data.next_link).searchParams.get('continuation_token');
     if (cont) console.log(`→ page ${pageCount + 1} continuation_token: ${cont}`);
   }
-
+  console.log(`fetched page ${pageCount + 1}`);
   // recurse if we got rows and next_link differs
   if (data.next_link && data.next_link !== url && data.value.length) {
     return fetchMultipleRecords(data.next_link, subscriptionKey, allItems, pageCount + 1, maxPages);
   }
-
+  
   return allItems;
 }
 
@@ -220,7 +226,8 @@ app.get('/status', function (req, res) {
 
 // API Retrieval Path (Page logging for validation)
 app.use('/getBlackbaudData', (req, res, next) => {
-  const DEFAULT_LIMIT = 500;
+  console.log('[debug] query params:', req.query);
+  const DEFAULT_LIMIT = 5000;
   const DEFAULT_OFFSET = 0;
 
   const { endpoint, page, offset } = req.query;
@@ -234,19 +241,26 @@ app.use('/getBlackbaudData', (req, res, next) => {
 // API Retrieval Path for All Action Records
 // streams all Action rows to a temp CSV on the server
 app.get('/bulk/actions', async (req, res) => {
-  if (!storedAccessToken) return res.status(401).json({ error: 'Not authenticated' });
+  if (!storedAccessToken) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
 
-  const LIMIT = 5000;
-  let next = `https://api.sky.blackbaud.com/constituent/v1/actions?limit=${LIMIT}`;
-  const tmpId = uuidv4();
+  // ── fixed header so opportunity_id is never dropped ───────────────
+  const ACTION_COLS = [
+    'id', 'category', 'completed', 'completed_date', 'computed_status',
+    'constituent_id', 'date', 'date_added', 'date_modified', 'description',
+    'direction', 'end_time', 'location', 'outcome', 'opportunity_id',
+    'priority', 'start_time', 'status', 'status_code', 'summary', 'type',
+    'fundraisers'
+  ];
+
+  const LIMIT   = 5000;
+  let next      = `https://api.sky.blackbaud.com/constituent/v1/actions?limit=${LIMIT}`;
+  const tmpId   = uuidv4();
   const tmpFile = path.join(os.tmpdir(), `actions_${tmpId}.csv`);
 
-  // Timestamp for testing and record keeping
-  const startTs = Date.now();
-  let pageCount = 0;
-  let total = 0;
-
-  const out = stringify({ header: true });
+  // CSV stream with explicit columns ---------------------------------
+  const out  = stringify({ header: true, columns: ACTION_COLS });
   const dest = fs.createWriteStream(tmpFile);
   out.pipe(dest);
 
@@ -315,7 +329,7 @@ app.get('/getBlackbaudData', async (req, res) => {
     return res.status(401).json({ error: "Not authenticated." });
   }
   // API URL parameters
-  const DEFAULT_LIMIT = 500;
+  const DEFAULT_LIMIT = 5000;
   const DEFAULT_OFFSET = 0;
   const endpoint = req.query.endpoint || "constituents";
   const limit = req.query.limit !== undefined
@@ -324,16 +338,16 @@ app.get('/getBlackbaudData', async (req, res) => {
   const offset = req.query.offset !== undefined
     ? parseInt(req.query.offset, 10)
     : DEFAULT_OFFSET;
-  const maxPages = req.query.maxPages !== undefined
-    ? parseInt(req.query.maxPages, 10)
-    : 1;
+  const maxPages = (req.query.max_pages ?? req.query.maxPages) !== undefined
+    ? parseInt(req.query.max_pages ?? req.query.maxPages, 10)
+    : Infinity;
   const name = req.query.name || null;
   const lookupId = req.query.lookup_id || req.query.lookupId || null;
   const recordId = req.query.id; // Endpoint specific ID for single record retrieval
   const queryId = req.query.query_id || req.query.queryId;
   const dateAdded = req.query.date_added || req.query.dateAdded || null;
   const lastModified = req.query.last_modified || req.query.lastModified || null;
-  const includeInactive = req.query.include_inactive || req.query.includeInactive === 'true';
+  const includeInactive = toBool(req.query.include_inactive ?? req.query.includeInactive, false);
   const searchText = req.query.search_text || req.query.searchText || null;
   const sortToken = req.query.sort_token || req.query.sortToken || null;
   const listId = req.query.list_id || req.query.listId || null;
@@ -368,6 +382,7 @@ app.get('/getBlackbaudData', async (req, res) => {
       if (recordId) {
         const singleUrl = `https://api.sky.blackbaud.com/constituent/v1/actions/${recordId}`;
         const singleData = await fetchSingleRecord(singleUrl, subscriptionKey);
+        console.log("URL = ", singleUrl);
         return res.json({ value: [ singleData ] });
       } else {
         let url = `https://api.sky.blackbaud.com/constituent/v1/actions?`;
@@ -383,6 +398,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
+        console.log("→ Initial Actions URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -394,7 +410,10 @@ app.get('/getBlackbaudData', async (req, res) => {
         const singleData = await fetchSingleRecord(singleUrl, subscriptionKey);
         return res.json({ value: [ singleData ] });
       } else {
-        let url = `https://api.sky.blackbaud.com/constituent/v1/constituents?limit=${limit}&offset=${offset}`;
+        let url = `https://api.sky.blackbaud.com/constituent/v1/constituents?`;
+        if (includeInactive) url += `include_inactive=true&`;
+        url += `limit=${limit}&offset=${offset}`;
+        console.log("→ Initial Constituents URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -426,6 +445,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
+        console.log("→ Initial Events URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -437,8 +457,8 @@ app.get('/getBlackbaudData', async (req, res) => {
         const singleData = await fetchSingleRecord(singleUrl, subscriptionKey);
         return res.json({ value: [ singleData ] });
       } else {
-        let url = `https://api.sky.blackbaud.com/gift/v1/gifts?`;
-        if (dateAdded) url += `date_added=${encodeURI(dateAdded)}&`;
+        let url = `https://api.sky.blackbaud.com/gift/v1/gifts?product=RE&module=None&`;
+        if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
         if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
         if (constituentId) url += `constituent_id=${encodeURIComponent(constituentId)}&`;
         if (postStatus) url += `post_status=${encodeURIComponent(postStatus)}&`; // needs to be added as parameter
@@ -457,7 +477,7 @@ app.get('/getBlackbaudData', async (req, res) => {
         if (sortToken) { 
           // cursor mode: ignore offset, start from the supplied token
           url += `sort_token=${encodeURIComponent(sortToken)}&limit=${limit}`;
-        } else {
+        } else if (!dateAdded && !lastModified) {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
@@ -485,6 +505,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
+        console.log("→ Initial Funds URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -507,6 +528,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
+        console.log("→ Initial Campaigns URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -521,7 +543,7 @@ app.get('/getBlackbaudData', async (req, res) => {
         let url = `https://api.sky.blackbaud.com/fundraising/v1/appeals?`;
         if (dateAdded) url += `date_added=${encodeURIComponent(dateAdded)}&`;
         if (lastModified) url += `last_modified=${encodeURIComponent(lastModified)}&`;
-        url += `include_inactive=${includeInactive}&`;
+        if (includeInactive) url += `include_inactive=true&`;
         if (sortToken) { 
           // cursor mode: ignore offset, start from the supplied token
           url += `sort_token=${encodeURIComponent(sortToken)}&limit=${limit}`;
@@ -529,6 +551,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
+        console.log("→ Initial Appeals URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -556,6 +579,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
+        console.log("→ Initial Opportunities URL:", url);
         const allRecords = await fetchMultipleRecords(url, subscriptionKey, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
