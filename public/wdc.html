@@ -252,7 +252,6 @@
               <label for="fundIdInput" class="form-label">Fund ID</label>
               <input type="text" id="fundIdInput" class="form-control" />
             </div>
-            -->
             <div class="mb-2">
               <label for="dateAddedInput" class="form-label">Date Added</label>
               <input type="text" id="dateAddedInput" class="form-control" />
@@ -269,6 +268,7 @@
               <label for="fundIdInput" class="form-label">Fund ID</label>
               <input type="text" id="fundIdInput" class="form-control" />
             </div>
+            -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveFunds" />
               <label class="form-check-label" for="includeInactiveFunds">
@@ -280,7 +280,8 @@
           <!-- Campaigns Endpoint Filters -->
           <div class="filter-group" data-endpoint="campaigns" style="display:none">
             <!-- COPY PASTE AVAILABLE FILTERS -->
-            <div class="mb-2">
+            <!--
+             <div class="mb-2">
               <label for="dateAddedInput" class="form-label">Date Added</label>
               <input type="text" id="dateAddedInput" class="form-control" />
             </div>
@@ -292,6 +293,7 @@
               <label for="sortTokenInput" class="form-label">Sort Token</label>
               <input type="text" id="sortTokenInput" class="form-control" />
             </div>
+            -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveCampaigns" />
               <label class="form-check-label" for="includeInactiveCampaigns">
@@ -303,6 +305,7 @@
           <!-- Appeals Endpoint Filters -->
           <div class="filter-group" data-endpoint="appeals" style="display:none">
             <!-- COPY PASTE AVAILABLE FILTERS -->
+             <!--
             <div class="mb-2">
               <label for="dateAddedInput" class="form-label">Date Added</label>
               <input type="text" id="dateAddedInput" class="form-control" />
@@ -315,6 +318,7 @@
               <label for="sortTokenInput" class="form-label">Sort Token</label>
               <input type="text" id="sortTokenInput" class="form-control" />
             </div>
+             -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveAppeals" />
               <label class="form-check-label" for="includeInactiveAppeals">
@@ -326,6 +330,7 @@
           <!-- Opportunity Endpoint Filters -->
           <div class="filter-group" data-endpoint="opportunities" style="display:none">
             <!-- COPY PASTE AVAILABLE FILTERS -->
+            <!--
             <div class="mb-2">
               <label for="dateAddedInput" class="form-label">Date Added</label>
               <input type="text" id="dateAddedInput" class="form-control" />
@@ -335,16 +340,17 @@
               <input type="text" id="lastModifiedInput" class="form-control" />
             </div>
             <div class="mb-2">
-              <label for="searchTextInput" class="form-label">Search Text</label>
-              <input type="text" id="searchTextInput" class="form-control" />
-            </div>
-            <div class="mb-2">
               <label for="sortTokenInput" class="form-label">Sort Token</label>
               <input type="text" id="sortTokenInput" class="form-control" />
             </div>
             <div class="mb-2">
               <label for="constituentIdInput" class="form-label">Constituent ID</label>
               <input type="text" id="constituentIdInput" class="form-control" />
+            </div>
+            -->
+            <div class="mb-2">
+              <label for="searchTextInput" class="form-label">Search Text</label>
+              <input type="text" id="searchTextInput" class="form-control" />
             </div>
             <div class="mb-2">
               <label for="listIdInput" class="form-label">List ID</label>
@@ -361,30 +367,7 @@
           <!-- Events Endpoint Filters -->
           <div class="filter-group" data-endpoint="events" style="display:none">
             <!-- COPY PASTE AVAILABLE FILTERS -->
-            <div class="mb-2">
-              <label for="nameInput" class="form-label">Name</label>
-              <input type="text" id="nameInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lookupIdInput" class="form-label">Lookup ID</label>
-              <input type="text" id="lookupIdInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="categoryInput" class="form-label">Category</label>
-              <input type="text" id="categoryInput" class="form-control" />
-            </div>
-            <div class="mb-2"> <!-- NEEDS TO BE TESTED -->
-              <label for="eventIdInput" class="form-label">Event ID</label>
-              <input type="text" id="eventIdInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="startDateFromInput" class="form-label">Start Date From</label>
-              <input type="text" id="startDateFromInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="startDateToInput" class="form-label">Start Date To</label>
-              <input type="text" id="startDateToInput" class="form-control" />
-            </div>
+            <!--
             <div class="mb-2">
               <label for="dateAddedInput" class="form-label">Date Added</label>
               <input type="text" id="dateAddedInput" class="form-control" />
@@ -400,6 +383,31 @@
             <div class="mb-2">
               <label for="sortInput" class="form-label">Sort</label>
               <input type="text" id="sortInput" class="form-control" />
+            </div>
+            -->
+            <div class="mb-2">
+              <label for="nameInput" class="form-label">Name</label>
+              <input type="text" id="nameInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="lookupIdInput" class="form-label">Lookup ID</label>
+              <input type="text" id="lookupIdInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="categoryInput" class="form-label">Category</label>
+              <input type="text" id="categoryInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="eventIdInput" class="form-label">Event ID</label>
+              <input type="text" id="eventIdInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="startDateFromInput" class="form-label">Start Date From</label>
+              <input type="text" id="startDateFromInput" class="form-control" />
+            </div>
+            <div class="mb-2">
+              <label for="startDateToInput" class="form-label">Start Date To</label>
+              <input type="text" id="startDateToInput" class="form-control" />
             </div>
             <div class="mb-2">
               <label for="groupInput" class="form-label">Group</label>
