@@ -3,7 +3,6 @@
 // -------------------------------------------------- //
 require('dotenv').config();
 
-const config = require('./config.js');
 const cookieParser = require('cookie-parser');
 const http = require('http');
 const request = require('request');
@@ -22,19 +21,23 @@ const { max } = require('moment');
 
 const requestPromise = promisify(request);
 
-// ---- Secrets (read once and never re-declare) ----
-const clientID = process.env.CLIENT_ID || config.CLIENT_ID;
-const clientSecret = process.env.CLIENT_SECRET || config.CLIENT_SECRET;
-const subscriptionKey = process.env.SUBSCRIPTION_KEY || config.SUBSCRIPTION_KEY;
+// ---- Centralised runtime-config object ----
+const config = {
+  PORT: process.env.PORT || 3333,
+  HOSTPATH: process.env.HOSTPATH || 'http://localhost',
+  REDIRECT_PATH: process.env.REDIRECT_PATH || '/redirect'
+};
 
-// ---- Other config values ----
-const PORT = process.env.PORT || config.PORT || 3333;
-const HOSTPATH = process.env.HOSTPATH || config.HOSTPATH || 'http://localhost';
+// ---- Secrets (read once and never re-declare) ----
+const clientID = process.env.CLIENT_ID;
+const clientSecret = process.env.CLIENT_SECRET;
+const subscriptionKey = process.env.SUBSCRIPTION_KEY;
+const redirectURI = `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`;
 
 // -------------------------
 // Express App
 // -------------------------
-app.set('port', PORT);
+app.set('port', config.PORT);
 app.use(cookieParser());
 app.use(express.static(__dirname + '/public'));
 app.use(cors());
@@ -261,6 +264,9 @@ app.get('/bulk/actions', async (req, res) => {
   ];
 
   const LIMIT   = 5000;
+  let pageCount = 0;
+  let total = 0;
+  const startTs = Date.now();
   let next      = `https://api.sky.blackbaud.com/constituent/v1/actions?limit=${LIMIT}`;
   const tmpId   = uuidv4();
   const tmpFile = path.join(os.tmpdir(), `actions_${tmpId}.csv`);
@@ -680,6 +686,6 @@ app.get('/getBlackbaudData', async (req, res) => {
   }
 });
 
-http.createServer(app).listen(app.get('port'), function () {
-  console.log('Express server listening on port ' + app.get('port'));
+http.createServer(app).listen(config.PORT, function () {
+  console.log('Express server listening on port ' + config.PORT);
 });
