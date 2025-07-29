@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  wdc:
+    image: ghcr.io/ORG_NAME/renxt-wdc:latest   # auto-updated by Watchtower
+    env_file: .env                             # <-- present only on the VM
+    ports:
+      - "3333:3333"
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 3 * * *          # 3 a.m. local
+      - WATCHTOWER_LABEL_ENABLE=true
+      - REGISTRY_AUTH_FILE=/config/creds.json
+    volumes:
+      - ./watchtower-creds.json:/config/creds.json:ro
+    restart: unless-stopped
