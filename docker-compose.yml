@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   wdc:
-    image: renxt-wdc        # or ghcr.io/your-org/renxt-wdc if you're testing with GHCR
+    image: ghcr.io/tayden77/renxt-wdc:latest
     ports:
       - "3333:3333"
     env_file: .env
