@@ -2,21 +2,8 @@ version: "3.9"
 
 services:
   wdc:
-    image: renxt-wdc   # auto-updated by Watchtower
-    env_file: .env                             # <-- present only on the VM
+    image: renxt-wdc        # or ghcr.io/your-org/renxt-wdc if you're testing with GHCR
     ports:
       - "3333:3333"
-    restart: unless-stopped
-
-  watchtower:
-    image: containrrr/watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_SCHEDULE=0 3 * * *          # 3 a.m. local
-      - WATCHTOWER_LABEL_ENABLE=true
-      - REGISTRY_AUTH_FILE=/config/creds.json
-    volumes:
-      - ./watchtower-creds.json:/config/creds.json:ro
+    env_file: .env
     restart: unless-stopped
