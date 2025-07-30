@@ -13,6 +13,7 @@ const os = require('os');
 const path = require('path');
 const express = require('express');
 const app = express();
+const session = require('express-session');
 const { promisify } = require('util');
 const { parse: parseCsv } = require('csv-parse/sync'); // Requires: npm i csv-parse
 const { v4: uuidv4 } = require('uuid'); // Requires: npm i uuid
@@ -41,6 +42,15 @@ app.set('port', config.PORT);
 app.use(cookieParser());
 app.use(express.static(__dirname + '/public'));
 app.use(cors());
+app.use(session ({
+  secret: process.env.SESSION_SECRET || 'dev-secret', 
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false,
+    maxAge: 60 * 60 * 1000 // 1 hour session timeout
+  }
+}));
 
 // -------------------------------------------------- //
 // Helper Functions
@@ -86,9 +96,9 @@ async function ensureValidToken() {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
       const body = JSON.parse(resp.body);
-      storedAccessToken   = body.access_token;
-      storedRefreshToken  = body.refresh_token;
-      tokenExpiry         = Date.now() + body.expires_in * 1000;
+      req.session.accessToken  = body.access_token;
+      req.session.refreshToken  = body.refresh_token;
+      req.session.tokenExpiry         = Date.now() + body.expires_in * 1000;
     }
     catch (refreshErr) {
       console.error("Token refresh failed:", refreshErr);
@@ -168,9 +178,10 @@ async function fetchMultipleRecords(url, subscriptionKey, allItems = [], pageCou
 // console.log("Redirect URI: " + redirectURI);
 // console.log("Subscription Key: " + subscriptionKey);
 
-let storedAccessToken = null;
-let storedRefreshToken = null;
-let tokenExpiry = 0;
+//****  removed while testing multi-user session based token storage ****/
+// let storedAccessToken = null;
+// let storedRefreshToken = null;
+// let tokenExpiry = 0;
 
 // Base Path
 app.get('/', function (req, res) {
@@ -190,10 +201,9 @@ app.get('/auth', function (req, res) {
 });
 
 app.get(config.REDIRECT_PATH, function (req, res) {
-  var authCode = req.query.code;
+  const authCode = req.query.code;
   console.log("Auth Code is: " + authCode);
-  console.log('[DEBUG] clientID from process.env:', process.env.CLIENT_ID);
-  console.log('[DEBUG] clientID used:', clientID);
+
   var requestObject = {
     'client_id': clientID,
     'redirect_uri': redirectURI,
@@ -201,23 +211,27 @@ app.get(config.REDIRECT_PATH, function (req, res) {
     'code': authCode,
     'grant_type': 'authorization_code'
   };
-  var token_request_header = { 'Content-Type': 'application/x-www-form-urlencoded' };
-  var options = {
+
+  const options = {
     method: 'POST',
     url: 'https://oauth2.sky.blackbaud.com/token',
     form: requestObject,
-    headers: token_request_header
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
   };
+
   request(options, function (error, response, body) {
     if (!error) {
-      body = JSON.parse(body);
+      const body = JSON.parse(body);
       console.log("Received JSON from RE NXT: ", body);
+      req.session.accessToken = body.access_token;
+      req.session.refreshToken = body.refresh_token;
+      req.session.tokenExpiry = Date.now() + data.expires_in * 1000;
       var accessToken = body.access_token;
       console.log('Received accessToken: ' + accessToken);
-      storedAccessToken = accessToken;
-      console.log('[DEBUG] Stored access token:', accessToken ? '[SET]' : '[EMPTY]');
-      storedRefreshToken = body.refresh_token;
-      tokenExpiry = Date.now() + body.expires_in * 1000;
+      console.log('[DEBUG] Stored access token:', req.session.accessToken);
+      // storedAccessToken = accessToken;
+      // storedRefreshToken = body.refresh_token;
+      // tokenExpiry = Date.now() + body.expires_in * 1000;
       res.redirect('/wdc.html');
     } else {
       console.log("Token exchange error:", error);
@@ -228,7 +242,7 @@ app.get(config.REDIRECT_PATH, function (req, res) {
 
 // Authentication Status
 app.get('/status', function (req, res) {
-  if (storedAccessToken) {
+  if (req.session.accessToken) {
     res.json({ authenticated: true });
   } else {
     res.json({ authenticated: false });
@@ -252,7 +266,7 @@ app.use('/getBlackbaudData', (req, res, next) => {
 // API Retrieval Path for All Action Records
 // streams all Action rows to a temp CSV on the server
 app.get('/bulk/actions', async (req, res) => {
-  if (!storedAccessToken) {
+  if (!req.session.accessToken) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
@@ -291,7 +305,7 @@ app.get('/bulk/actions', async (req, res) => {
         uri: next,
         json: true,
         headers: {
-          Authorization: `Bearer ${storedAccessToken}`,
+          Authorization: `Bearer ${req.session.accessToken}`,
           'Bb-Api-Subscription-Key': subscriptionKey
         }
       });
@@ -339,7 +353,7 @@ app.get('/bulk/actions/chunk', (req, res) => {
 
 // Main API Retrieval Path
 app.get('/getBlackbaudData', async (req, res) => {
-  if (!storedAccessToken) {
+  if (!req.session.accessToken) {
     return res.status(401).json({ error: "Not authenticated." });
   }
   // API URL parameters
@@ -619,7 +633,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           method: 'POST',
           url: 'https://api.sky.blackbaud.com/query/queries/executebyid?product=RE&module=None',
           headers: {
-            Authorization: `Bearer ${storedAccessToken}`,
+            Authorization: `Bearer ${req.session.accessToken}`,
             'Bb-Api-Subscription-Key': subscriptionKey,
             'Content-Type': 'application/json'
           },
@@ -636,7 +650,7 @@ app.get('/getBlackbaudData', async (req, res) => {
             method: 'GET',
             url: `https://api.sky.blackbaud.com/query/jobs/${jobId}?product=RE&module=None&include_read_url=OnceCompleted&content_disposition=Attachment`,
             headers: {
-              Authorization: `Bearer ${storedAccessToken}`,
+              Authorization: `Bearer ${req.session.accessToken}`,
               'Bb-Api-Subscription-Key': subscriptionKey
             }
           });
