@@ -221,11 +221,11 @@ app.get(config.REDIRECT_PATH, function (req, res) {
 
   request(options, function (error, response, body) {
     if (!error) {
-      const body = JSON.parse(body);
+      body = JSON.parse(body);
       console.log("Received JSON from RE NXT: ", body);
       req.session.accessToken = body.access_token;
       req.session.refreshToken = body.refresh_token;
-      req.session.tokenExpiry = Date.now() + data.expires_in * 1000;
+      req.session.tokenExpiry = Date.now() + body.expires_in * 1000;
       var accessToken = body.access_token;
       console.log('Received accessToken: ' + accessToken);
       console.log('[DEBUG] Stored access token:', req.session.accessToken);
