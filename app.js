@@ -690,11 +690,7 @@ app.get('/getBlackbaudData', async (req, res) => {
 
 http.createServer(app).listen(config.PORT, function () {
   console.log('Express server listening on port ' + config.PORT);
-});
-
-app.listen(port, function () {
-  console.log(`Express server listening on port ${port}`);
   console.log('[DEBUG] CLIENT_ID:', clientID);
-  console.log('[DEBUG] CLIENT_SECRET:', clientSecret ? '[REDACTED]' : 'NOT SET');
+  console.log('[DEBUG] CLIENT_SECRET:', clientSecret ? '[REDACTED]': 'NOT SET');
   console.log('[DEBUG] REDIRECT_URI:', redirectURI);
 });
