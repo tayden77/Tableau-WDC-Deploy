@@ -1,0 +1,56 @@
+# Project Name: RENXT-WDC
+
+## Description
+This project is designed to [briefly describe the purpose of the project]. It provides [key features or functionality] to help users [specific use case or goal].
+
+## Installation
+1. Clone the repository:
+    ```
+    git clone https://github.com/your-repo/renxt-wdc.git
+    ```
+2. Navigate to the project directory:
+    ```
+    cd renxt-wdc
+    ```
+3. Install dependencies:
+    ```
+    npm install
+    ```
+
+## Usage
+1. Set up environment variables:
+    - Create a `.env` file in the root directory.
+    - Add the required environment variables as specified in the `.env.example` file.
+    - **Important:** Do not wrap environment variable values in quotes. For example:
+      ```
+      API_KEY=your-api-key
+      ```
+      Wrapping values in quotes may cause unexpected behavior.
+
+2. Start the application:
+    ```
+    npm start
+    ```
+
+## Contributing
+Contributions are welcome! Please follow these steps:
+1. Fork the repository.
+2. Create a new branch for your feature or bug fix:
+    ```
+    git checkout -b feature-name
+    ```
+3. Commit your changes:
+    ```
+    git commit -m "Add feature-name"
+    ```
+4. Push to your branch:
+    ```
+    git push origin feature-name
+    ```
+5. Open a pull request.
+
+## License
+This project is licensed under the [License Name]. See the `LICENSE` file for details.
+
+## Contact
+For questions or support, please contact [Your Name] at [Your Email Address].
