@@ -216,6 +216,7 @@ app.get(config.REDIRECT_PATH, function (req, res) {
       var accessToken = body.access_token;
       console.log('Received accessToken: ' + accessToken);
       storedAccessToken = accessToken;
+      console.log('[DEBUG] Stored access token:', accessToken ? '[SET]' : '[EMPTY]');
       storedRefreshToken = body.refresh_token;
       tokenExpiry = Date.now() + body.expires_in * 1000;
       res.redirect('/wdc.html');
