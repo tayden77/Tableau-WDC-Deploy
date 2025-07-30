@@ -192,7 +192,8 @@ app.get('/auth', function (req, res) {
 app.get(config.REDIRECT_PATH, function (req, res) {
   var authCode = req.query.code;
   console.log("Auth Code is: " + authCode);
-
+  console.log('[DEBUG] clientID from process.env:', process.env.CLIENT_ID);
+  console.log('[DEBUG] clientID used:', clientID);
   var requestObject = {
     'client_id': clientID,
     'redirect_uri': redirectURI,
@@ -200,8 +201,6 @@ app.get(config.REDIRECT_PATH, function (req, res) {
     'code': authCode,
     'grant_type': 'authorization_code'
   };
-  console.log('Using CLIENT_ID:', process.env.CLIENT_ID);
-  console.log('Using CLIENT_SECRET:', process.env.CLIENT_SECRET);
   var token_request_header = { 'Content-Type': 'application/x-www-form-urlencoded' };
   var options = {
     method: 'POST',
