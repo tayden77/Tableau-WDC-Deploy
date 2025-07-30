@@ -186,7 +186,7 @@ async function fetchMultipleRecords(url, subscriptionKey, allItems = [], pageCou
 // Base Path
 app.get('/', function (req, res) {
   console.log("Received GET /, redirecting to wdc.html...");
-  res.redirect('/wdc.html');
+  res.redirect(`/wdc.html#access_token=${access_token}`);
 });
 
 // BlackBaud Authentication Path

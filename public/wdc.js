@@ -1,3 +1,25 @@
+(function () {
+  const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
+  const accessToken = fragmentParams.get('access_token');
+
+  if (accessToken) {
+    sessionStorage.setItem('access_token', accessToken);
+  }
+
+  window.history.replaceState(null, '', window.location.pathname);
+
+  // Use the stored token if available
+  const token = sessionStorage.getItem('access_token');
+  updateUIWithAuthState(!!token);
+
+  // Replace the stored token if available
+  if (token) {
+    tableau.connectionData = JSON.stringify({ accessToken: token });
+  }
+
+  tableau.connectionName = "RE NXT Data"; // Give the data source a name
+})();
+
 function mapConstituents(item) {
   return {
     id: item.id,
