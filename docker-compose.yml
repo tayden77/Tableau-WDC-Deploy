@@ -7,3 +7,15 @@ services:
       - "3333:3333"
     env_file: .env
     restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./watchtower-creds.json:/config/creds.json:ro
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_SCHEDULE=0 3 * * * 
+      - WATCHTOWER_LABEL_ENABLE=true
+      - REGISTRY_AUTH_FILE=/config/creds.json
+    restart: unless-stopped
