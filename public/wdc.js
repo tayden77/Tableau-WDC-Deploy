@@ -1,3 +1,27 @@
+  // UI update
+  function updateUIWithAuthState(hasAuth) {
+    if (hasAuth) {
+      $(".notsignedin").hide();
+      $(".signedin").show();
+
+      // Hide the connect button
+      $("#connectButton").hide();
+
+      // Authenticated... Show the Main Section
+      $("#mainSection").show();
+    } else {
+      $(".notsignedin").show();
+      $(".signedin").hide();
+
+      // Show the connect button
+      $("#connectButton").show();
+
+      // Not Authenticated... Hide the Main Section
+      $("#mainSection").hide();
+    }
+  }
+
+
 (function () {
   const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
   const accessToken = fragmentParams.get('access_token');
@@ -435,29 +459,6 @@ function mapAppeals(item) {
     // since the server handles authentication.
     authUrl: "https://oauth2.sky.blackbaud.com/authorization"
   };
-
-  // UI update
-  function updateUIWithAuthState(hasAuth) {
-    if (hasAuth) {
-      $(".notsignedin").hide();
-      $(".signedin").show();
-
-      // Hide the connect button
-      $("#connectButton").hide();
-
-      // Authenticated... Show the Main Section
-      $("#mainSection").show();
-    } else {
-      $(".notsignedin").show();
-      $(".signedin").hide();
-
-      // Show the connect button
-      $("#connectButton").show();
-
-      // Not Authenticated... Hide the Main Section
-      $("#mainSection").hide();
-    }
-  }
 
   $(document).ready(function () {
     // Query the server for authentication status.
