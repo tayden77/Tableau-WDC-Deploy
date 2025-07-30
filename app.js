@@ -200,6 +200,8 @@ app.get(config.REDIRECT_PATH, function (req, res) {
     'code': authCode,
     'grant_type': 'authorization_code'
   };
+  console.log('Using CLIENT_ID:', process.env.CLIENT_ID);
+  console.log('Using CLIENT_SECRET:', process.env.CLIENT_SECRET);
   var token_request_header = { 'Content-Type': 'application/x-www-form-urlencoded' };
   var options = {
     method: 'POST',
@@ -207,8 +209,6 @@ app.get(config.REDIRECT_PATH, function (req, res) {
     form: requestObject,
     headers: token_request_header
   };
-  console.log('Using CLIENT_ID:', process.env.CLIENT_ID);
-  console.log('Using CLIENT_SECRET:', process.env.CLIENT_SECRET);
   request(options, function (error, response, body) {
     if (!error) {
       body = JSON.parse(body);
