@@ -707,4 +707,5 @@ http.createServer(app).listen(config.PORT, function () {
   console.log('[DEBUG] CLIENT_ID:', clientID);
   console.log('[DEBUG] CLIENT_SECRET:', clientSecret ? '[REDACTED]': 'NOT SET');
   console.log('[DEBUG] REDIRECT_URI:', redirectURI);
+  console.log('Great Work!!');
 });
