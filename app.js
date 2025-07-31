@@ -261,7 +261,22 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
 
 // Authentication Status
 app.get('/status', (req, res) => {
-  res.json({ authenticated: haveValidTokens(req.query.uid) });
+  const uid = req.query.uid;
+
+  // client passed a uid -> normal path
+  if (uid) {
+    res.json({ authenticated: haveValidTokens(req.query.uid) });
+  }
+
+  // client did NOT pass a uid -> see if exactly one valid session exists
+  const validUids = [...tokenCache.keys()].filter(haveValidTokens);
+
+  if (validUids.lenth === 1) {
+    return res.json({ authenticated: true, uid: validUids[0] });
+  }
+
+  // zero / multiple valid sessions - force explicit sign-in / selection
+  res.json({ authenticated: false });
 });
 
 

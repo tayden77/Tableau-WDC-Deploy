@@ -460,13 +460,33 @@ function mapAppeals(item) {
     authUrl: "https://oauth2.sky.blackbaud.com/authorization"
   };
 
-  const uid = new URLSearchParams(window.location.search).get('uid');
+  const uid = new URLSearchParams(window.location.search).get('uid') || null;
 
   $(document).ready(function () {
     // Query the server for authentication status.
     $.getJSON("http://localhost:3333/status?uid=" + uid, status => {
       updateUIWithAuthState(status.authenticated);
     });
+
+    function checkAuth() {
+      const url = uid
+        ? `http://localhost:3333/status?uid=${uid}`
+        : `http://localhost:3333/status`;
+
+      $.getJSON(url, (stat) => {
+        // the server volunteers a uid if exactly one valid session exists
+        if (!uid && stat.uid) {
+          uid = stat.uid;
+
+          const p = new URL(window.location.href);
+          p.searchParams.set('uid', uid);
+          window.history.replaceState(null, '', p.toString());
+        }
+        
+        updateUIWithAuthState(stat.authenticated);
+      });
+    }
+    checkAuth();
 
     function updateFilters() {
       const ep = $('#endpointSelect').val();
