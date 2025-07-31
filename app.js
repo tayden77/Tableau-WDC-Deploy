@@ -271,7 +271,7 @@ app.get('/status', (req, res) => {
   // client did NOT pass a uid -> see if exactly one valid session exists
   const validUids = [...tokenCache.keys()].filter(haveValidTokens);
 
-  if (validUids.lenth === 1) {
+  if (validUids.length === 1) {
     return res.json({ authenticated: true, uid: validUids[0] });
   }
 
