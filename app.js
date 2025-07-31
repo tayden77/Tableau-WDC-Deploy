@@ -48,6 +48,18 @@ function haveValidTokens(key) {
   return t && t.exp > Date.now();
 }
 
+// Clear up token cache
+// run once at startup
+setInterval(() => {
+  const now = Date.now();
+  for (const [uid, tok] of tokenCache) {
+    if (tok.exp + 24 * 60 * 60 * 1000 < now) {   // 24 h grace period
+      tokenCache.delete(uid);
+      console.log('[gc] purged tokens for', uid);
+    }
+  }
+}, 60 * 60 * 1000); // every hour
+
 // -------------------------------------------------- //
 // Helper Functions
 // -------------------------------------------------- //
