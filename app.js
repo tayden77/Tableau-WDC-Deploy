@@ -265,7 +265,7 @@ app.get('/status', (req, res) => {
 
   // client passed a uid -> normal path
   if (uid) {
-    res.json({ authenticated: haveValidTokens(req.query.uid) });
+    res.json({ authenticated: haveValidTokens(uid) });
   }
 
   // client did NOT pass a uid -> see if exactly one valid session exists
