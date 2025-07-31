@@ -232,7 +232,7 @@ app.get('/auth', (_, res) => {
     `&scope=${encodeURIComponent(scopes)}`
   ].join('&');
 
-  console.log('[auth] redirect ->', oauthUrl);
+  console.log("Redirecting to OAuth URL: " + oauthUrl);
   res.redirect(oauthUrl)
 })
 
