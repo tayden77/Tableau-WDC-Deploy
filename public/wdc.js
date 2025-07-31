@@ -21,28 +21,28 @@
     }
   }
 
+// Unused now - Replaced
+// (function () {
+//   const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
+//   const accessToken = fragmentParams.get('access_token');
 
-(function () {
-  const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
-  const accessToken = fragmentParams.get('access_token');
+//   if (accessToken) {
+//     sessionStorage.setItem('access_token', accessToken);
+//   }
 
-  if (accessToken) {
-    sessionStorage.setItem('access_token', accessToken);
-  }
+//   window.history.replaceState(null, '', window.location.pathname);
 
-  window.history.replaceState(null, '', window.location.pathname);
+//   // Use the stored token if available
+//   const token = sessionStorage.getItem('access_token');
+//   updateUIWithAuthState(!!token);
 
-  // Use the stored token if available
-  const token = sessionStorage.getItem('access_token');
-  updateUIWithAuthState(!!token);
+//   // Replace the stored token if available
+//   if (token) {
+//     tableau.connectionData = JSON.stringify({ accessToken: token });
+//   }
 
-  // Replace the stored token if available
-  if (token) {
-    tableau.connectionData = JSON.stringify({ accessToken: token });
-  }
-
-  tableau.connectionName = "RE NXT Data"; // Give the data source a name
-})();
+//   tableau.connectionName = "RE NXT Data"; // Give the data source a name
+// })();
 
 function mapConstituents(item) {
   return {
@@ -460,9 +460,11 @@ function mapAppeals(item) {
     authUrl: "https://oauth2.sky.blackbaud.com/authorization"
   };
 
+  const uid = new URLSearchParams(window.location.search).get('uid');
+
   $(document).ready(function () {
     // Query the server for authentication status.
-    $.getJSON("http://localhost:3333/status", function (status) {
+    $.getJSON("http://localhost:3333/status?uid=" + uid, status => {
       updateUIWithAuthState(status.authenticated);
     });
 
@@ -481,7 +483,7 @@ function mapAppeals(item) {
 
     // Connect button: instruct the user to authenticate if not done.
     $("#connectButton").click(function () {
-      $.getJSON("http://localhost:3333/status", function (status) {
+      $.getJSON(`http://localhost:3333/status?uid=${uid}`, function (status) {
         if (!status.authenticated) {
           // Instead of alerting, automatically redirect to /auth
           window.location.href = "http://localhost:3333/auth";
@@ -508,6 +510,7 @@ function mapAppeals(item) {
       const limit = $("#limitInput").val();
       const offset = $("#offsetInput").val();
       const maxPages = $("#maxPagesInput").val();
+      const chunkSize = $("#chunkSizeInput").val();
       const fetchAll = $("#fetchAllRecords").is(":checked");
       const name = $("#nameInput").val();
       const lookupId = $("#lookupIdInput").val();
@@ -546,7 +549,7 @@ function mapAppeals(item) {
         lastModified, includeInactive, searchText, sortToken, listId, fundId, eventId, constituentId,
         category, startDateFrom, startDateTo, fields, sort, group, statusCode, continuationToken,
         postStatus, giftType, receiptStatus, acknowledgementStatus, campaignId, appealId, startGiftDate,
-        endGiftDate, startGiftAmount, endGiftAmount
+        endGiftDate, startGiftAmount, endGiftAmount, chunkSize
       };
       tableau.connectionData = JSON.stringify(cfg);
 
@@ -995,7 +998,7 @@ function mapAppeals(item) {
 
     // Dynamic Query Table
     if (cfg.endpoint === "query") {
-      fetch(`/getBlackbaudData?endpoint=query&queryId=${cfg.queryId}&schemaOnly=1`)
+      fetch(`/getBlackbaudData?uid=${uid}&endpoint=query&queryId=${cfg.queryId}&schemaOnly=1`)
         .then(r => r.json())
         .then(headerArr => {
           const queryCols = headerArr.map(h => ({
@@ -1069,7 +1072,7 @@ function mapAppeals(item) {
     // Determine which table the WDC is currently asking for
     const tableId = table.tableInfo.id;
     // Call the server route /getBlackbaudData with parameters
-    let url = `http://localhost:3333/getBlackbaudData?endpoint=${tableId}`;
+    let url = `http://localhost:3333/getBlackbaudData?uid=${uid}&endpoint=${tableId}`;
     // add user typed parameters
     if (cfg.recordId) url += `&id=${cfg.recordId}`;
     if (cfg.queryId) url += `&query_id=${cfg.queryId}`;
@@ -1188,12 +1191,12 @@ function mapAppeals(item) {
         2)  BULK DOWNLOAD  (cfg.fetchAll === true)
       ------------------------------------------------------------------*/
       if (cfg.fetchAll) {
-        const CHUNK = cfg.chunkSize ?? 15000;
+        const CHUNK = parseInt(cfg.chunkSize || "15000", 10)
         let page = 0;
         let bulkId;
     
         // --- init ---
-        fetch('http://localhost:3333/bulk/actions')
+        fetch(`http://localhost:3333/bulk/actions?uid=${uid}&chunkSize=${CHUNK}`)
           .then(r => {
             if (!r.ok) throw new Error(`Bulk init failed: ${r.statusText}`);
             return r.json();
@@ -1207,7 +1210,7 @@ function mapAppeals(item) {
     
         // --- loop ---
         function fetchChunk() {
-          fetch(`http://localhost:3333/bulk/actions/chunk?id=${bulkId}&page=${page}&chunkSize=${CHUNK}`)
+          fetch(`http://localhost:3333/bulk/actions/chunk?uid=${uid}&id=${bulkId}&page=${page}&chunkSize=${CHUNK}`)
             .then(r => r.json())
             .then(obj => {
               if (!obj.value.length) return doneCallback();
@@ -1348,95 +1351,95 @@ function mapAppeals(item) {
       return;
     }
 
-    // Single-page fetch for static tables
-    else if (tableId === 'constituents') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapConstituents);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'actions') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapActions);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'gifts') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapGifts);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'opportunities') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapOpportunities);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'events') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapEvents);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'funds') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapFunds);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'campaigns') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapCampaigns);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-    else if (tableId === 'appeals') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapAppeals);
-          table.appendRows(rows);
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+    // // Single-page fetch for static tables [Now unused and duplicate]
+    // else if (tableId === 'constituents') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapConstituents);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'actions') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapActions);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'gifts') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapGifts);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'opportunities') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapOpportunities);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'events') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapEvents);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'funds') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapFunds);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'campaigns') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapCampaigns);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
+    // else if (tableId === 'appeals') {
+    //   fetch(url)
+    //     .then(r => r.json())
+    //     .then(data => {
+    //       const rows = data.value.map(mapAppeals);
+    //       table.appendRows(rows);
+    //       doneCallback();
+    //     })
+    //     .catch(e => tableau.abortWithError(e));
+    //   return;
+    // }
   };
 
   tableau.registerConnector(myConnector);
