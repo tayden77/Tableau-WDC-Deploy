@@ -242,16 +242,16 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
     const tok = JSON.parse(resp.body);
 
     //const userId = await fetchUserId(tok.access_token); //404 error (07/31/25)
-    const sessionId = uuidv4();
+    const uid = uuidv4();
 
-    setTokens(userId, {
+    setTokens(uid, {
       access:  tok.access_token,
       refresh: tok.refresh_token,
       exp:     Date.now() + tok.expires_in * 1000
     });
 
     // send the uid back to the browser
-    res.redirect(`/wdc.html?uid=${encodeURIComponent(sessionId)}`);
+    res.redirect(`/wdc.html?uid=${encodeURIComponent(uid)}`);
   } catch (err) {
     console.error('OAuth exchange failed', err);
     res.status(500).send('OAuth exchange failed');
