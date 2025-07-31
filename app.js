@@ -230,7 +230,7 @@ app.get('/auth', (_, res) => {
     `&client_id=${encodeURIComponent(clientID)}`,
     `&redirect_uri=${encodeURIComponent(redirectURI)}`,
     `&scope=${encodeURIComponent(scopes)}`
-  ].join('&');
+  ].join('');
 
   console.log("Redirecting to OAuth URL: " + oauthUrl);
   res.redirect(oauthUrl)
