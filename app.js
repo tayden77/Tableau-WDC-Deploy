@@ -56,6 +56,13 @@ async function fetchUserId(accessToken) {
       'Bb-Api-Subscription-Key': subscriptionKey
     }
   });
+
+  if (r.statusCode !== 200) {
+    console.error('[fetchUserId] identity call failed',
+      { status: r.statusCode, body: r.body.slice(0, 500) });
+      throw new Error(`Identity lookup failed (${r.statusCode})`);
+  }
+
   return JSON.parse(r.body).id;
 }
 
@@ -203,7 +210,7 @@ app.get('/auth', function (req, res) {
     "?response_type=code" +
     "&client_id=" + encodeURIComponent(clientID) +
     "&redirect_uri=" + encodeURIComponent(redirectURI) +
-    "&scope=" + encodeURIComponent("rnxt.w rnxt.r");
+    "&scope=" + encodeURIComponent("rnxt.w rnxt.r identity_basic offline_access");
   console.log("Redirecting to OAuth URL: " + oauthUrl);
   res.redirect(oauthUrl);
 });
