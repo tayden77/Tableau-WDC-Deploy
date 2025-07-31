@@ -48,25 +48,6 @@ function haveValidTokens(key) {
   return t && t.exp > Date.now();
 }
 
-async function fetchUserId(accessToken) {
-  const r = await requestPromise({
-    url: 'https://api.sky.blackbaud.com/identity/v2/user',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Bb-Api-Subscription-Key': subscriptionKey
-    }
-  });
-
-  if (r.statusCode !== 200) {
-    console.error('[fetchUserId] identity call failed',
-      { status: r.statusCode, body: r.body.slice(0, 500) });
-      throw new Error(`Identity lookup failed (${r.statusCode})`);
-  }
-
-  return JSON.parse(r.body).id;
-}
-
-
 // -------------------------------------------------- //
 // Helper Functions
 // -------------------------------------------------- //
@@ -201,6 +182,11 @@ async function fetchMultipleRecords(uid, url, allItems = [], pageCount = 0, maxP
 // let storedRefreshToken = null;
 // let tokenExpiry = 0;
 
+
+// -------------------------------------------------- //
+//  ROUTES
+// -------------------------------------------------- //
+
 // Base Path
 app.get('/', (_, res) => res.redirect('/wdc.html'));
 
@@ -255,7 +241,8 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
 
     const tok = JSON.parse(resp.body);
 
-    const userId = await fetchUserId(tok.access_token);
+    //const userId = await fetchUserId(tok.access_token); //404 error (07/31/25)
+    const sessionId = uuidv4();
 
     setTokens(userId, {
       access:  tok.access_token,
@@ -264,7 +251,7 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
     });
 
     // send the uid back to the browser
-    res.redirect(`/wdc.html?uid=${encodeURIComponent(userId)}`);
+    res.redirect(`/wdc.html?uid=${encodeURIComponent(sessionId)}`);
   } catch (err) {
     console.error('OAuth exchange failed', err);
     res.status(500).send('OAuth exchange failed');
