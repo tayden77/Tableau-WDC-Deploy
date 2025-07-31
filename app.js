@@ -50,7 +50,7 @@ function haveValidTokens(key) {
 
 async function fetchUserId(accessToken) {
   const r = await requestPromise({
-    url: 'https://api.sky.blackbaud.com/identity/v1/user',
+    url: 'https://api.sky.blackbaud.com/identity/v2/user',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Bb-Api-Subscription-Key': subscriptionKey
@@ -205,15 +205,35 @@ async function fetchMultipleRecords(uid, url, allItems = [], pageCount = 0, maxP
 app.get('/', (_, res) => res.redirect('/wdc.html'));
 
 // BlackBaud Authentication Path
-app.get('/auth', function (req, res) {
-  var oauthUrl = "https://oauth2.sky.blackbaud.com/authorization" +
-    "?response_type=code" +
-    "&client_id=" + encodeURIComponent(clientID) +
-    "&redirect_uri=" + encodeURIComponent(redirectURI) +
-    "&scope=" + encodeURIComponent("rnxt.w rnxt.r identity_basic offline_access");
-  console.log("Redirecting to OAuth URL: " + oauthUrl);
-  res.redirect(oauthUrl);
-});
+// app.get('/auth', function (req, res) {
+//   var oauthUrl = "https://oauth2.sky.blackbaud.com/authorization" +
+//     "?response_type=code" +
+//     "&client_id=" + encodeURIComponent(clientID) +
+//     "&redirect_uri=" + encodeURIComponent(redirectURI) +
+//     "&scope=" + encodeURIComponent("rnxt.w rnxt.r identity_basic offline_access");
+//   console.log("Redirecting to OAuth URL: " + oauthUrl);
+//   res.redirect(oauthUrl);
+// });
+
+app.get('/auth', (_, res) => {
+  const scopes = [
+    'rnxt.w',     // read/write RE-NXT APIs
+    'rnxt.r',
+    'identity_basic',    // calls the identity service
+    'offline_access'     // for the refresh-token
+  ].join(' ');
+
+  const oauthUrl = [
+    'https://oauth2.sky.blackbaud.com/authorization',
+    `response_type=code`,
+    `client_id=${encodeURIComponent(clientID)}`,
+    `redirect_uri=${encodeURIComponent(redirectURI)}`,
+    `scope=${encodeURIComponent(scopes)}`
+  ].join('&');
+
+  console.log('[auth] redirect ->', oauthUrl);
+  res.redirect(oauthUrl)
+})
 
 app.get(config.REDIRECT_PATH, async (req, res) => {
   const authCode = req.query.code;
@@ -233,6 +253,7 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
     });
 
     const tok = JSON.parse(resp.body);
+
     const userId = await fetchUserId(tok.access_token);
 
     setTokens(userId, {
