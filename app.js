@@ -215,6 +215,7 @@ app.get('/', (_, res) => res.redirect('/wdc.html'));
 //   res.redirect(oauthUrl);
 // });
 
+// New Authentication Path
 app.get('/auth', (_, res) => {
   const scopes = [
     'rnxt.w',     // read/write RE-NXT APIs
@@ -225,10 +226,10 @@ app.get('/auth', (_, res) => {
 
   const oauthUrl = [
     'https://oauth2.sky.blackbaud.com/authorization',
-    `response_type=code`,
-    `client_id=${encodeURIComponent(clientID)}`,
-    `redirect_uri=${encodeURIComponent(redirectURI)}`,
-    `scope=${encodeURIComponent(scopes)}`
+    `?response_type=code`,
+    `&client_id=${encodeURIComponent(clientID)}`,
+    `&redirect_uri=${encodeURIComponent(redirectURI)}`,
+    `&scope=${encodeURIComponent(scopes)}`
   ].join('&');
 
   console.log('[auth] redirect ->', oauthUrl);
