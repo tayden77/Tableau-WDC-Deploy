@@ -1,7 +1,61 @@
 /***********************************************
  *  --------- Global Section ---------
  **********************************************/
-let uid = null;
+let tok = new URLSearchParams(location.search).get('tok') || null;
+
+const API_BASE = '';
+
+const urlParams = new URLSearchParams(location.search);
+const urlSid = urlParams.get('sid') || null;
+
+// Stable session id used to pair Tableau Desktop <-> external browser
+const SID_KEY = 'bb_sid';
+let sid = sessionStorage.getItem(SID_KEY);
+
+const HAS_TABLEAU = typeof window !== 'undefined' && typeof window.tableau !== 'undefined';
+
+// If a sid is in the URL, that overrides everything (this is how Desktop passes its sid to Chrome)
+if (urlSid) {
+  sid = urlSid;
+  sessionStorage.setItem(SID_KEY, sid);
+  // strip sid (and optionally tok) from the URL bar
+  const clean = new URLSearchParams(location.search);
+  clean.delete('sid');
+  // keep tok in the URL only long enough to stash it; bootstrapToken() already removes it later
+  history.replaceState(null, '', `${location.pathname}${clean.toString() ? `?${clean}` : ''}`);
+}
+
+// Restore SID/JWT when we're inside Tableau (gatherDataPhase)
+if (HAS_TABLEAU) {
+  try {
+    // If Desktop already stored them, pull them back
+    if (!sid && tableau.username) {
+      sid = tableau.password;
+      sessionStorage.setItem('bb_jwt', tok);
+    }
+  } catch (e) {
+    // ignore if not available yet
+  }
+}
+
+// If still no sid, generate one
+if (!sid) {
+  sid = (crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+  sessionStorage.setItem(SID_KEY, sid);
+}
+
+
+// Persist JWT across reloads and remove from URL bar
+(function bootstrapToken() {
+  if (!tok) tok = sessionStorage.getItem('bb_jwt') || null;
+  if (!tok && HAS_TABLEAU && typeof tableau !== 'undefined' && tableau.password) tok = tableau.password;
+  if (tok) {
+    sessionStorage.setItem('bb_jwt', tok);
+    if (location.search.includes('tok=')) {
+      history.replaceState(null, '', location.pathname); // remove the token from the URL
+    }
+  }
+})();
 
 // IIFE Function
 (function () {
@@ -14,7 +68,7 @@ let uid = null;
       $(".signedin").show();
 
       // Hide the connect button
-      $("#connectButton").hide();
+      $("#connectLink").hide();
 
       // Authenticated... Show the Main Section
       $("#mainSection").show();
@@ -23,31 +77,94 @@ let uid = null;
       $(".signedin").hide();
 
       // Show the connect button
-      $("#connectButton").show();
+      $("#connectLink").show();
 
       // Not Authenticated... Hide the Main Section
       $("#mainSection").hide();
     }
   }
 
-  function checkAuth() {
-    const url = uid
-      ? `http://localhost:3333/status?uid=${uid}`
-      : `http://localhost:3333/status`;
+  // function checkAuth() {
+  //   const url = tok
+  //     ? `http://localhost:3333/status?tok=${encodeURIComponent(tok)}`
+  //     : `http://localhost:3333/status`;
 
-    $.getJSON(url, (stat) => {
-      // the server volunteers a uid if exactly one valid session exists
-      if (!uid && stat.uid) {
-        uid = stat.uid;
+  //   $.getJSON(url, (stat) => {
+  //     if (!tok && stat.tok) { tok = stat.tok; }  // if server minted a fresh token
+  //     updateUIWithAuthState(stat.authenticated);
+  //   });
+  // }
 
-        const p = new URL(window.location.href);
-        p.searchParams.set('uid', uid);
-        window.history.replaceState(null, '', p.toString());
-      }
-
-      updateUIWithAuthState(stat.authenticated);
-    });
+  // Ensure SID/JWT are restored from Tableau when running inside Desktop 
+  function ensureCredentialsFromTableau() {
+    if (typeof window !== 'undefined' && typeof window.tableau !== 'undefined') {
+      try {
+        if (!sid && tableau.username) {
+          sid = tableau.username;
+          sessionStorage.setItem(SID_KEY, sid);
+        }
+        if (!tok && tableau.password) {
+          tok = tableau.password;
+          sessionStorage.setItem('bb_jwt', tok);
+          // make sure future AJAX/fetch carries the Bearer
+          try { $.ajaxSetup({ headers: { Authorization: `Bearer ${tok}` } }); } catch {}
+        }
+      } catch {}
+    }
   }
+
+  // Check authentication status and update UI accordingly
+  function checkAuth() {
+    authedJson(`/status?sid=${encodeURIComponent(sid)}`)
+      .then(stat => {
+        if (stat.tok) {
+          tok = stat.tok;
+          sessionStorage.setItem('bb_jwt', tok);
+          $.ajaxSetup({ headers: { Authorization: `Bearer ${tok}` } });
+        }
+        updateUIWithAuthState(!!stat.authenticated);
+      })
+      .catch(() => updateUIWithAuthState(false));
+  }
+
+  // Refresh the JWT token if needed
+  async function refreshTok() {
+    if (!tok) return false;
+    const stat = await fetch(`${API_BASE}/status?sid=${encodeURIComponent(sid)}`, {
+      headers: { Authorization: `Bearer ${tok}` }
+    }).then(r => r.json());
+    if (stat && stat.tok) {
+      tok = stat.tok;
+      sessionStorage.setItem('bb_jwt', tok);
+      $.ajaxSetup({ headers: { Authorization: `Bearer ${tok}` } });
+      return true;
+    }
+    return false;
+  }
+  // Authed fetch function to handle JWT and API base URL
+  function authedFetch(url, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const fullUrl = /^https?:\/\//.test(url) ? url : `${API_BASE}${url}`;
+    return fetch(fullUrl, { credentials: 'same-origin', ...opts, headers });
+  }
+
+  // Authed JSON fetch function to handle JWT and API base URL
+  async function authedJson(url, opts) {
+    let r = await authedFetch(url, opts);
+    if (r.status === 401) {
+      // try to renew our short-lived JWT
+      const ok = await refreshTok();
+      if (ok) {
+        r = await authedFetch(url, opts); // retry once with fresh token
+      }
+    }
+    if (!r.ok) {
+      throw new Error(`${r.status} ${r.statusText} @ ${url}`);
+    }
+    return r.json();
+  }
+
 
   /* Show / hide filter groups whenever the endpoint changes  */
   function updateFilters() {
@@ -538,7 +655,11 @@ let uid = null;
       postStatus, giftType, receiptStatus, acknowledgementStatus, campaignId, appealId, startGiftDate,
       endGiftDate, startGiftAmount, endGiftAmount, chunkSize
     };
+
+    cfg.sid = sid;
     tableau.connectionData = JSON.stringify(cfg);
+    tableau.username = sid;
+    if (tok) tableau.password = tok;
 
     tableau.connectionName = `Blackbaud RE NXT Connector (Server-Side OAuth) - ${endpoint}`;
     tableau.submit();
@@ -548,8 +669,30 @@ let uid = null;
   *  ----- DOM-Ready Block - browser only -----
   **********************************************/
   $(document).ready(function () {
+    ensureCredentialsFromTableau();
     // Query the server for authentication status.
-    uid = new URLSearchParams(location.search).get('uid') || null;
+    if (HAS_TABLEAU && typeof tableau.init === 'function') {
+      try { tableau.init(); } catch (e) { console.warn('tableau.init failed', e); }
+    }
+
+    if (tok) {
+      $.ajaxSetup({
+        headers: { Authorization: `Bearer ${tok}` }
+      });
+    }
+
+    // If your HTML has these anchors, make them carry the Desktop sid
+    const ext = document.getElementById('externalAuth'); // e.g. "Sign in using external browser"
+    if (ext) ext.href = `/auth?sid=${encodeURIComponent(sid)}`;
+
+    const openDesktop = document.getElementById('openInDesktop'); // e.g. "Open in Tableau Desktop"
+    if (openDesktop) {
+      const qp = new URLSearchParams();
+      qp.set('sid', sid);
+      if (tok) qp.set('tok', tok);
+      openDesktop.href = `/wdc.html?${qp.toString()}`;
+    }
+
 
     checkAuth();
 
@@ -567,16 +710,14 @@ let uid = null;
     updateFilters();
 
     // Connect button: instruct the user to authenticate if not done.
-    $("#connectButton").click(function () {
-      $.getJSON(`http://localhost:3333/status?uid=${uid}`, function (status) {
-        if (!status.authenticated) {
-          // Instead of alerting, automatically redirect to /auth
-          window.location.href = "http://localhost:3333/auth";
-        } else {
-          alert("Already authenticated.");
-        }
-      });
+    $("#connectLink").on('click', (e) => {
+      const authUrl = `/auth?sid=${encodeURIComponent(sid)}`;
+      // use absolute HTTP to avoid any accidental HTTPS rewrite showing up in dev
+      const abs = `http://${location.host}${authUrl}`;
+      e.preventDefault();
+      window.location.assign(abs);
     });
+
 
     // Get Data button triggers the WDC flow
     $("#getDataButton").on('click', buildCfgAndSubmit);
@@ -585,890 +726,894 @@ let uid = null;
   /***********************************************
   *  --- Tableau Connector (Schema + Data) ---
   **********************************************/
+  if (HAS_TABLEAU) {
+    // Define the WDC
+    const myConnector = tableau.makeConnector();
 
-  // Define the WDC
-  const myConnector = tableau.makeConnector();
+    // Define Table Schemas
+    myConnector.getSchema = function (schemaCallback) {
+      ensureCredentialsFromTableau();
 
-  // Define Table Schemas
-  myConnector.getSchema = function (schemaCallback) {
+      const cfg = JSON.parse(tableau.connectionData); // contains user input parameters
 
-    const cfg = JSON.parse(tableau.connectionData); // contains user input parameters
+      // Constituents Table Schema
+      const constituentsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "address", dataType: tableau.dataTypeEnum.string },
+        { id: "address_id", dataType: tableau.dataTypeEnum.string },
+        { id: "address_lines", dataType: tableau.dataTypeEnum.string },
+        { id: "city", dataType: tableau.dataTypeEnum.string },
+        { id: "addr_const_id", dataType: tableau.dataTypeEnum.string },
+        { id: "country", dataType: tableau.dataTypeEnum.string },
+        { id: "county", dataType: tableau.dataTypeEnum.string },
+        { id: "do_not_mail", dataType: tableau.dataTypeEnum.bool },
+        { id: "formatted_address", dataType: tableau.dataTypeEnum.string },
+        { id: "postal_code", dataType: tableau.dataTypeEnum.string },
+        { id: "preferred", dataType: tableau.dataTypeEnum.bool },
+        { id: "state", dataType: tableau.dataTypeEnum.string },
+        { id: "address_type", dataType: tableau.dataTypeEnum.string },
+        { id: "age", dataType: tableau.dataTypeEnum.int },
+        { id: "birth_day", dataType: tableau.dataTypeEnum.int },
+        { id: "birth_month", dataType: tableau.dataTypeEnum.int },
+        { id: "birth_year", dataType: tableau.dataTypeEnum.int },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "deceased", dataType: tableau.dataTypeEnum.bool },
+        { id: "deceased_date_day", dataType: tableau.dataTypeEnum.int },
+        { id: "deceased_date_month", dataType: tableau.dataTypeEnum.int },
+        { id: "deceased_date_year", dataType: tableau.dataTypeEnum.int },
+        { id: "email", dataType: tableau.dataTypeEnum.string },
+        { id: "email_id", dataType: tableau.dataTypeEnum.string },
+        { id: "email_address", dataType: tableau.dataTypeEnum.string },
+        { id: "do_not_email", dataType: tableau.dataTypeEnum.bool },
+        { id: "email_inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "email_primary", dataType: tableau.dataTypeEnum.bool },
+        { id: "email_type", dataType: tableau.dataTypeEnum.string },
+        { id: "first", dataType: tableau.dataTypeEnum.string },
+        { id: "former_name", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_status", dataType: tableau.dataTypeEnum.string },
+        { id: "gender", dataType: tableau.dataTypeEnum.string },
+        { id: "gives_anonymously", dataType: tableau.dataTypeEnum.bool },
+        { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "last", dataType: tableau.dataTypeEnum.string },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "marital_status", dataType: tableau.dataTypeEnum.string },
+        { id: "middle", dataType: tableau.dataTypeEnum.string },
+        { id: "name", dataType: tableau.dataTypeEnum.string },
+        { id: "online_presence", dataType: tableau.dataTypeEnum.string },
+        { id: "online_presence_id", dataType: tableau.dataTypeEnum.string },
+        { id: "online_presence_address", dataType: tableau.dataTypeEnum.string },
+        { id: "online_presence_inactive", dataType: tableau.dataTypeEnum.string },
+        { id: "online_presence_primary", dataType: tableau.dataTypeEnum.string },
+        { id: "online_presence_type", dataType: tableau.dataTypeEnum.string },
+        { id: "phone", dataType: tableau.dataTypeEnum.string },
+        { id: "phone_id", dataType: tableau.dataTypeEnum.string },
+        { id: "do_not_call", dataType: tableau.dataTypeEnum.bool },
+        { id: "phone_inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "phone_number", dataType: tableau.dataTypeEnum.string },
+        { id: "phone_primary", dataType: tableau.dataTypeEnum.bool },
+        { id: "phone_type", dataType: tableau.dataTypeEnum.string },
+        { id: "preferred_name", dataType: tableau.dataTypeEnum.string },
+        { id: "spouse", dataType: tableau.dataTypeEnum.string },
+        { id: "spouse_id", dataType: tableau.dataTypeEnum.string },
+        { id: "spouse_first", dataType: tableau.dataTypeEnum.string },
+        { id: "spouse_last", dataType: tableau.dataTypeEnum.string },
+        { id: "spouse_hoh", dataType: tableau.dataTypeEnum.bool },
+        { id: "suffix", dataType: tableau.dataTypeEnum.string },
+        { id: "suffix_2", dataType: tableau.dataTypeEnum.string },
+        { id: "title", dataType: tableau.dataTypeEnum.string },
+        { id: "title_2", dataType: tableau.dataTypeEnum.string },
+        { id: "type", dataType: tableau.dataTypeEnum.string },
+        { id: "birthplace", dataType: tableau.dataTypeEnum.string },
+        { id: "ethnicity", dataType: tableau.dataTypeEnum.string },
+        { id: "income", dataType: tableau.dataTypeEnum.string },
+        { id: "religion", dataType: tableau.dataTypeEnum.string },
+        { id: "industry", dataType: tableau.dataTypeEnum.string },
+        { id: "matches_gifts", dataType: tableau.dataTypeEnum.bool },
+        { id: "matching_gift_per_gift_min", dataType: tableau.dataTypeEnum.float },
+        { id: "matching_gift_per_gift_max", dataType: tableau.dataTypeEnum.float },
+        { id: "matching_gift_total_min", dataType: tableau.dataTypeEnum.float },
+        { id: "matching_gift_total_max", dataType: tableau.dataTypeEnum.float },
+        { id: "matching_gift_factor", dataType: tableau.dataTypeEnum.float },
+        { id: "matching_gift_notes", dataType: tableau.dataTypeEnum.string },
+        { id: "num_employees", dataType: tableau.dataTypeEnum.int },
+        { id: "is_memorial", dataType: tableau.dataTypeEnum.bool },
+        { id: "is_solicitor", dataType: tableau.dataTypeEnum.bool },
+        { id: "no_valid_address", dataType: tableau.dataTypeEnum.bool },
+        { id: "receipt_type", dataType: tableau.dataTypeEnum.string },
+        { id: "target", dataType: tableau.dataTypeEnum.string },
+        { id: "requests_no_email", dataType: tableau.dataTypeEnum.bool },
+        { id: "import_id", dataType: tableau.dataTypeEnum.string },
+        { id: "is_constituent", dataType: tableau.dataTypeEnum.bool },
+        { id: "num_subsidiaries", dataType: tableau.dataTypeEnum.int },
+        { id: "parent_corporation_name", dataType: tableau.dataTypeEnum.string },
+        { id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
+      ];
+      const constituentsTable = {
+        id: "constituents",
+        alias: "Raiser's Edge NXT Constituents (via server)",
+        columns: constituentsCols
+      };
 
-    // Constituents Table Schema
-    const constituentsCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "address", dataType: tableau.dataTypeEnum.string },
-      { id: "address_id", dataType: tableau.dataTypeEnum.string },
-      { id: "address_lines", dataType: tableau.dataTypeEnum.string },
-      { id: "city", dataType: tableau.dataTypeEnum.string },
-      { id: "addr_const_id", dataType: tableau.dataTypeEnum.string },
-      { id: "country", dataType: tableau.dataTypeEnum.string },
-      { id: "county", dataType: tableau.dataTypeEnum.string },
-      { id: "do_not_mail", dataType: tableau.dataTypeEnum.bool },
-      { id: "formatted_address", dataType: tableau.dataTypeEnum.string },
-      { id: "postal_code", dataType: tableau.dataTypeEnum.string },
-      { id: "preferred", dataType: tableau.dataTypeEnum.bool },
-      { id: "state", dataType: tableau.dataTypeEnum.string },
-      { id: "address_type", dataType: tableau.dataTypeEnum.string },
-      { id: "age", dataType: tableau.dataTypeEnum.int },
-      { id: "birth_day", dataType: tableau.dataTypeEnum.int },
-      { id: "birth_month", dataType: tableau.dataTypeEnum.int },
-      { id: "birth_year", dataType: tableau.dataTypeEnum.int },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "deceased", dataType: tableau.dataTypeEnum.bool },
-      { id: "deceased_date_day", dataType: tableau.dataTypeEnum.int },
-      { id: "deceased_date_month", dataType: tableau.dataTypeEnum.int },
-      { id: "deceased_date_year", dataType: tableau.dataTypeEnum.int },
-      { id: "email", dataType: tableau.dataTypeEnum.string },
-      { id: "email_id", dataType: tableau.dataTypeEnum.string },
-      { id: "email_address", dataType: tableau.dataTypeEnum.string },
-      { id: "do_not_email", dataType: tableau.dataTypeEnum.bool },
-      { id: "email_inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "email_primary", dataType: tableau.dataTypeEnum.bool },
-      { id: "email_type", dataType: tableau.dataTypeEnum.string },
-      { id: "first", dataType: tableau.dataTypeEnum.string },
-      { id: "former_name", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_status", dataType: tableau.dataTypeEnum.string },
-      { id: "gender", dataType: tableau.dataTypeEnum.string },
-      { id: "gives_anonymously", dataType: tableau.dataTypeEnum.bool },
-      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "last", dataType: tableau.dataTypeEnum.string },
-      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
-      { id: "marital_status", dataType: tableau.dataTypeEnum.string },
-      { id: "middle", dataType: tableau.dataTypeEnum.string },
-      { id: "name", dataType: tableau.dataTypeEnum.string },
-      { id: "online_presence", dataType: tableau.dataTypeEnum.string },
-      { id: "online_presence_id", dataType: tableau.dataTypeEnum.string },
-      { id: "online_presence_address", dataType: tableau.dataTypeEnum.string },
-      { id: "online_presence_inactive", dataType: tableau.dataTypeEnum.string },
-      { id: "online_presence_primary", dataType: tableau.dataTypeEnum.string },
-      { id: "online_presence_type", dataType: tableau.dataTypeEnum.string },
-      { id: "phone", dataType: tableau.dataTypeEnum.string },
-      { id: "phone_id", dataType: tableau.dataTypeEnum.string },
-      { id: "do_not_call", dataType: tableau.dataTypeEnum.bool },
-      { id: "phone_inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "phone_number", dataType: tableau.dataTypeEnum.string },
-      { id: "phone_primary", dataType: tableau.dataTypeEnum.bool },
-      { id: "phone_type", dataType: tableau.dataTypeEnum.string },
-      { id: "preferred_name", dataType: tableau.dataTypeEnum.string },
-      { id: "spouse", dataType: tableau.dataTypeEnum.string },
-      { id: "spouse_id", dataType: tableau.dataTypeEnum.string },
-      { id: "spouse_first", dataType: tableau.dataTypeEnum.string },
-      { id: "spouse_last", dataType: tableau.dataTypeEnum.string },
-      { id: "spouse_hoh", dataType: tableau.dataTypeEnum.bool },
-      { id: "suffix", dataType: tableau.dataTypeEnum.string },
-      { id: "suffix_2", dataType: tableau.dataTypeEnum.string },
-      { id: "title", dataType: tableau.dataTypeEnum.string },
-      { id: "title_2", dataType: tableau.dataTypeEnum.string },
-      { id: "type", dataType: tableau.dataTypeEnum.string },
-      { id: "birthplace", dataType: tableau.dataTypeEnum.string },
-      { id: "ethnicity", dataType: tableau.dataTypeEnum.string },
-      { id: "income", dataType: tableau.dataTypeEnum.string },
-      { id: "religion", dataType: tableau.dataTypeEnum.string },
-      { id: "industry", dataType: tableau.dataTypeEnum.string },
-      { id: "matches_gifts", dataType: tableau.dataTypeEnum.bool },
-      { id: "matching_gift_per_gift_min", dataType: tableau.dataTypeEnum.float },
-      { id: "matching_gift_per_gift_max", dataType: tableau.dataTypeEnum.float },
-      { id: "matching_gift_total_min", dataType: tableau.dataTypeEnum.float },
-      { id: "matching_gift_total_max", dataType: tableau.dataTypeEnum.float },
-      { id: "matching_gift_factor", dataType: tableau.dataTypeEnum.float },
-      { id: "matching_gift_notes", dataType: tableau.dataTypeEnum.string },
-      { id: "num_employees", dataType: tableau.dataTypeEnum.int },
-      { id: "is_memorial", dataType: tableau.dataTypeEnum.bool },
-      { id: "is_solicitor", dataType: tableau.dataTypeEnum.bool },
-      { id: "no_valid_address", dataType: tableau.dataTypeEnum.bool },
-      { id: "receipt_type", dataType: tableau.dataTypeEnum.string },
-      { id: "target", dataType: tableau.dataTypeEnum.string },
-      { id: "requests_no_email", dataType: tableau.dataTypeEnum.bool },
-      { id: "import_id", dataType: tableau.dataTypeEnum.string },
-      { id: "is_constituent", dataType: tableau.dataTypeEnum.bool },
-      { id: "num_subsidiaries", dataType: tableau.dataTypeEnum.int },
-      { id: "parent_corporation_name", dataType: tableau.dataTypeEnum.string },
-      { id: "parent_corporation_id", dataType: tableau.dataTypeEnum.int }
-    ];
-    const constituentsTable = {
-      id: "constituents",
-      alias: "Raiser's Edge NXT Constituents (via server)",
-      columns: constituentsCols
-    };
+      // Actions Table Schema
+      const actionsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "category", dataType: tableau.dataTypeEnum.string },
+        { id: "completed", dataType: tableau.dataTypeEnum.bool },
+        { id: "completed_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "computed_status", dataType: tableau.dataTypeEnum.string },
+        { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "description", dataType: tableau.dataTypeEnum.string },
+        { id: "direction", dataType: tableau.dataTypeEnum.string },
+        { id: "end_time", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
+        { id: "location", dataType: tableau.dataTypeEnum.string },
+        { id: "outcome", dataType: tableau.dataTypeEnum.string },
+        { id: "opportunity_id", dataType: tableau.dataTypeEnum.string },
+        { id: "priority", dataType: tableau.dataTypeEnum.string },
+        { id: "start_time", dataType: tableau.dataTypeEnum.string },
+        { id: "status", dataType: tableau.dataTypeEnum.string },
+        { id: "status_code", dataType: tableau.dataTypeEnum.string },
+        { id: "summary", dataType: tableau.dataTypeEnum.string },
+        { id: "type", dataType: tableau.dataTypeEnum.string }
+      ];
+      const actionsTable = {
+        id: "actions",
+        alias: "Raiser's Edge NXT Actions",
+        columns: actionsCols
+      };
 
-    // Actions Table Schema
-    const actionsCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "category", dataType: tableau.dataTypeEnum.string },
-      { id: "completed", dataType: tableau.dataTypeEnum.bool },
-      { id: "completed_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "computed_status", dataType: tableau.dataTypeEnum.string },
-      { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "description", dataType: tableau.dataTypeEnum.string },
-      { id: "direction", dataType: tableau.dataTypeEnum.string },
-      { id: "end_time", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
-      { id: "location", dataType: tableau.dataTypeEnum.string },
-      { id: "outcome", dataType: tableau.dataTypeEnum.string },
-      { id: "opportunity_id", dataType: tableau.dataTypeEnum.string },
-      { id: "priority", dataType: tableau.dataTypeEnum.string },
-      { id: "start_time", dataType: tableau.dataTypeEnum.string },
-      { id: "status", dataType: tableau.dataTypeEnum.string },
-      { id: "status_code", dataType: tableau.dataTypeEnum.string },
-      { id: "summary", dataType: tableau.dataTypeEnum.string },
-      { id: "type", dataType: tableau.dataTypeEnum.string }
-    ];
-    const actionsTable = {
-      id: "actions",
-      alias: "Raiser's Edge NXT Actions",
-      columns: actionsCols
-    };
+      // Gifts Table Schema
+      const giftsCols = [
+        // Scalar/top‐level fields
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "amount_value", dataType: tableau.dataTypeEnum.float },
+        { id: "balance_value", dataType: tableau.dataTypeEnum.float },
+        { id: "batch_number", dataType: tableau.dataTypeEnum.string },
+        { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "gift_code", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_status", dataType: tableau.dataTypeEnum.string },
+        { id: "is_anonymous", dataType: tableau.dataTypeEnum.bool },
+        { id: "gift_aid_qualification_status", dataType: tableau.dataTypeEnum.string },
+        { id: "constituency", dataType: tableau.dataTypeEnum.string },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "post_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "post_status", dataType: tableau.dataTypeEnum.string },
+        { id: "reference", dataType: tableau.dataTypeEnum.string },
+        { id: "subtype", dataType: tableau.dataTypeEnum.string },
+        { id: "type", dataType: tableau.dataTypeEnum.string },
+        { id: "recurring_gift_status_day", dataType: tableau.dataTypeEnum.int },
+        { id: "recurring_gift_status_month", dataType: tableau.dataTypeEnum.int },
+        { id: "recurring_gift_status_year", dataType: tableau.dataTypeEnum.int },
 
-    // Gifts Table Schema
-    const giftsCols = [
-      // Scalar/top‐level fields
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "amount_value", dataType: tableau.dataTypeEnum.float },
-      { id: "balance_value", dataType: tableau.dataTypeEnum.float },
-      { id: "batch_number", dataType: tableau.dataTypeEnum.string },
-      { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "gift_code", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_status", dataType: tableau.dataTypeEnum.string },
-      { id: "is_anonymous", dataType: tableau.dataTypeEnum.bool },
-      { id: "gift_aid_qualification_status", dataType: tableau.dataTypeEnum.string },
-      { id: "constituency", dataType: tableau.dataTypeEnum.string },
-      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
-      { id: "post_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "post_status", dataType: tableau.dataTypeEnum.string },
-      { id: "reference", dataType: tableau.dataTypeEnum.string },
-      { id: "subtype", dataType: tableau.dataTypeEnum.string },
-      { id: "type", dataType: tableau.dataTypeEnum.string },
-      { id: "recurring_gift_status_day", dataType: tableau.dataTypeEnum.int },
-      { id: "recurring_gift_status_month", dataType: tableau.dataTypeEnum.int },
-      { id: "recurring_gift_status_year", dataType: tableau.dataTypeEnum.int },
+        // Raw JSON arrays
+        { id: "acknowledgements", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_splits", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gifts", dataType: tableau.dataTypeEnum.string },
+        { id: "payments", dataType: tableau.dataTypeEnum.string },
+        { id: "receipts", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credits", dataType: tableau.dataTypeEnum.string },
 
-      // Raw JSON arrays
-      { id: "acknowledgements", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_splits", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gifts", dataType: tableau.dataTypeEnum.string },
-      { id: "payments", dataType: tableau.dataTypeEnum.string },
-      { id: "receipts", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credits", dataType: tableau.dataTypeEnum.string },
+        // Acknowledgements (first 5)
+        { id: "acknowledgement_1_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "acknowledgement_1_status", dataType: tableau.dataTypeEnum.string },
+        { id: "acknowledgement_2_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "acknowledgement_2_status", dataType: tableau.dataTypeEnum.string },
+        { id: "acknowledgement_3_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "acknowledgement_3_status", dataType: tableau.dataTypeEnum.string },
+        { id: "acknowledgement_4_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "acknowledgement_4_status", dataType: tableau.dataTypeEnum.string },
+        { id: "acknowledgement_5_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "acknowledgement_5_status", dataType: tableau.dataTypeEnum.string },
 
-      // Acknowledgements (first 5)
-      { id: "acknowledgement_1_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "acknowledgement_1_status", dataType: tableau.dataTypeEnum.string },
-      { id: "acknowledgement_2_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "acknowledgement_2_status", dataType: tableau.dataTypeEnum.string },
-      { id: "acknowledgement_3_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "acknowledgement_3_status", dataType: tableau.dataTypeEnum.string },
-      { id: "acknowledgement_4_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "acknowledgement_4_status", dataType: tableau.dataTypeEnum.string },
-      { id: "acknowledgement_5_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "acknowledgement_5_status", dataType: tableau.dataTypeEnum.string },
+        // Fundraisers (first 5)
+        { id: "fundraiser_1_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_1_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_2_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_2_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_3_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_3_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_4_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_4_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_5_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_5_credit_amount", dataType: tableau.dataTypeEnum.float },
 
-      // Fundraisers (first 5)
-      { id: "fundraiser_1_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_1_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_2_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_2_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_3_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_3_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_4_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_4_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_5_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_5_credit_amount", dataType: tableau.dataTypeEnum.float },
+        // Gift Splits (first 5)
+        { id: "gift_split_1_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_1_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "gift_split_1_appeal_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_1_campaign_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_1_fund_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_2_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_2_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "gift_split_2_appeal_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_2_campaign_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_2_fund_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_3_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_3_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "gift_split_3_appeal_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_3_campaign_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_3_fund_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_4_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_4_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "gift_split_4_appeal_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_4_campaign_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_4_fund_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_5_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_5_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "gift_split_5_appeal_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_5_campaign_id", dataType: tableau.dataTypeEnum.string },
+        { id: "gift_split_5_fund_id", dataType: tableau.dataTypeEnum.string },
 
-      // Gift Splits (first 5)
-      { id: "gift_split_1_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_1_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "gift_split_1_appeal_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_1_campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_1_fund_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_2_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_2_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "gift_split_2_appeal_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_2_campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_2_fund_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_3_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_3_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "gift_split_3_appeal_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_3_campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_3_fund_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_4_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_4_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "gift_split_4_appeal_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_4_campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_4_fund_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_5_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_5_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "gift_split_5_appeal_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_5_campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "gift_split_5_fund_id", dataType: tableau.dataTypeEnum.string },
+        // Linked Gifts (first 10)
+        { id: "linked_gift_1_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_2_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_3_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_4_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_5_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_6_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_7_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_8_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_9_id", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_10_id", dataType: tableau.dataTypeEnum.string },
 
-      // Linked Gifts (first 10)
-      { id: "linked_gift_1_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_2_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_3_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_4_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_5_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_6_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_7_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_8_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_9_id", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_10_id", dataType: tableau.dataTypeEnum.string },
+        // Payments (first 5)
+        { id: "payment_1_method", dataType: tableau.dataTypeEnum.string },
+        { id: "payment_2_method", dataType: tableau.dataTypeEnum.string },
+        { id: "payment_3_method", dataType: tableau.dataTypeEnum.string },
+        { id: "payment_4_method", dataType: tableau.dataTypeEnum.string },
+        { id: "payment_5_method", dataType: tableau.dataTypeEnum.string },
 
-      // Payments (first 5)
-      { id: "payment_1_method", dataType: tableau.dataTypeEnum.string },
-      { id: "payment_2_method", dataType: tableau.dataTypeEnum.string },
-      { id: "payment_3_method", dataType: tableau.dataTypeEnum.string },
-      { id: "payment_4_method", dataType: tableau.dataTypeEnum.string },
-      { id: "payment_5_method", dataType: tableau.dataTypeEnum.string },
+        // Receipts (first 5)
+        { id: "receipt_1_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_1_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "receipt_1_number", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_1_status", dataType: tableau.dataTypeEnum.string },
+        { id: "receipt_2_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_2_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "receipt_2_number", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_2_status", dataType: tableau.dataTypeEnum.string },
+        { id: "receipt_3_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_3_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "receipt_3_number", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_3_status", dataType: tableau.dataTypeEnum.string },
+        { id: "receipt_4_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_4_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "receipt_4_number", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_4_status", dataType: tableau.dataTypeEnum.string },
+        { id: "receipt_5_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_5_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "receipt_5_number", dataType: tableau.dataTypeEnum.float },
+        { id: "receipt_5_status", dataType: tableau.dataTypeEnum.string },
 
-      // Receipts (first 5)
-      { id: "receipt_1_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_1_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "receipt_1_number", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_1_status", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_2_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_2_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "receipt_2_number", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_2_status", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_3_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_3_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "receipt_3_number", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_3_status", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_4_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_4_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "receipt_4_number", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_4_status", dataType: tableau.dataTypeEnum.string },
-      { id: "receipt_5_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_5_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "receipt_5_number", dataType: tableau.dataTypeEnum.float },
-      { id: "receipt_5_status", dataType: tableau.dataTypeEnum.string },
+        // Soft Credits (first 5)
+        { id: "soft_credit_1_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_1_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "soft_credit_1_const_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_1_gift_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_2_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_2_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "soft_credit_2_const_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_2_gift_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_3_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_3_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "soft_credit_3_const_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_3_gift_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_4_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_4_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "soft_credit_4_const_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_4_gift_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_5_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_5_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "soft_credit_5_const_id", dataType: tableau.dataTypeEnum.string },
+        { id: "soft_credit_5_gift_id", dataType: tableau.dataTypeEnum.string }
+      ];
 
-      // Soft Credits (first 5)
-      { id: "soft_credit_1_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_1_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "soft_credit_1_const_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_1_gift_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_2_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_2_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "soft_credit_2_const_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_2_gift_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_3_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_3_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "soft_credit_3_const_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_3_gift_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_4_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_4_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "soft_credit_4_const_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_4_gift_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_5_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_5_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "soft_credit_5_const_id", dataType: tableau.dataTypeEnum.string },
-      { id: "soft_credit_5_gift_id", dataType: tableau.dataTypeEnum.string }
-    ];
+      const giftsTable = {
+        id: "gifts",
+        alias: "Raiser's Edge NXT Gifts V1",
+        columns: giftsCols
+      };
 
-    const giftsTable = {
-      id: "gifts",
-      alias: "Raiser's Edge NXT Gifts V1",
-      columns: giftsCols
-    };
+      // Opportunities Table Schema
+      const opportunitiesCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "ask_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "ask_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "campaign_id", dataType: tableau.dataTypeEnum.string },
+        { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "deadline", dataType: tableau.dataTypeEnum.datetime },
+        { id: "expected_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "expected_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "funded_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "funded_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_1_constituent_id", dataType: tableau.dataTypeEnum.string }, // First flattened fundraiser ID
+        { id: "fundraiser_1_credit_amount", dataType: tableau.dataTypeEnum.float },   // First flattended fundraiser credit amount
+        { id: "fundraiser_2_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_2_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_3_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_3_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_4_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_4_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fundraiser_5_constituent_id", dataType: tableau.dataTypeEnum.string },
+        { id: "fundraiser_5_credit_amount", dataType: tableau.dataTypeEnum.float },
+        { id: "fund_id", dataType: tableau.dataTypeEnum.string },
+        { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "linked_gifts", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_1", dataType: tableau.dataTypeEnum.string }, // First flattened linked gift ID
+        { id: "linked_gift_2", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_3", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_4", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_5", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_6", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_7", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_8", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_9", dataType: tableau.dataTypeEnum.string },
+        { id: "linked_gift_10", dataType: tableau.dataTypeEnum.string },
+        { id: "name", dataType: tableau.dataTypeEnum.string },
+        { id: "purpose", dataType: tableau.dataTypeEnum.string },
+        { id: "status", dataType: tableau.dataTypeEnum.string },
+        { id: "opportunity_likelihood_name", dataType: tableau.dataTypeEnum.string },
+        { id: "opportunity_likelihood_id", dataType: tableau.dataTypeEnum.string }
+      ];
+      const opportunitiesTable = {
+        id: "opportunities",
+        alias: "Raiser's Edge NXT Opportunities v1",
+        columns: opportunitiesCols
+      };
 
-    // Opportunities Table Schema
-    const opportunitiesCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "ask_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "ask_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "campaign_id", dataType: tableau.dataTypeEnum.string },
-      { id: "constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "deadline", dataType: tableau.dataTypeEnum.datetime },
-      { id: "expected_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "expected_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "funded_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "funded_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "fundraisers", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_1_constituent_id", dataType: tableau.dataTypeEnum.string }, // First flattened fundraiser ID
-      { id: "fundraiser_1_credit_amount", dataType: tableau.dataTypeEnum.float },   // First flattended fundraiser credit amount
-      { id: "fundraiser_2_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_2_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_3_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_3_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_4_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_4_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fundraiser_5_constituent_id", dataType: tableau.dataTypeEnum.string },
-      { id: "fundraiser_5_credit_amount", dataType: tableau.dataTypeEnum.float },
-      { id: "fund_id", dataType: tableau.dataTypeEnum.string },
-      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "linked_gifts", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_1", dataType: tableau.dataTypeEnum.string }, // First flattened linked gift ID
-      { id: "linked_gift_2", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_3", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_4", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_5", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_6", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_7", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_8", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_9", dataType: tableau.dataTypeEnum.string },
-      { id: "linked_gift_10", dataType: tableau.dataTypeEnum.string },
-      { id: "name", dataType: tableau.dataTypeEnum.string },
-      { id: "purpose", dataType: tableau.dataTypeEnum.string },
-      { id: "status", dataType: tableau.dataTypeEnum.string },
-      { id: "opportunity_likelihood_name", dataType: tableau.dataTypeEnum.string },
-      { id: "opportunity_likelihood_id", dataType: tableau.dataTypeEnum.string }
-    ];
-    const opportunitiesTable = {
-      id: "opportunities",
-      alias: "Raiser's Edge NXT Opportunities v1",
-      columns: opportunitiesCols
-    };
+      // Events Table Schema
+      const eventsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "name", dataType: tableau.dataTypeEnum.string },
+        { id: "start_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "start_time", dataType: tableau.dataTypeEnum.string },
+        { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "end_time", dataType: tableau.dataTypeEnum.string },
+        { id: "attending_count", dataType: tableau.dataTypeEnum.float },
+        { id: "invited_count", dataType: tableau.dataTypeEnum.float },
+        { id: "revenue", dataType: tableau.dataTypeEnum.float },
+        { id: "goal", dataType: tableau.dataTypeEnum.float },
+        { id: "percent_of_goal", dataType: tableau.dataTypeEnum.float },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "capacity", dataType: tableau.dataTypeEnum.float },
+        { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "attended_count", dataType: tableau.dataTypeEnum.float },
+        { id: "category_id", dataType: tableau.dataTypeEnum.string },
+        { id: "category_name", dataType: tableau.dataTypeEnum.string },
+        { id: "category_inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "group_id", dataType: tableau.dataTypeEnum.string },
+        { id: "group_name", dataType: tableau.dataTypeEnum.string },
+        { id: "group_inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "expenses", dataType: tableau.dataTypeEnum.float },
+        { id: "net", dataType: tableau.dataTypeEnum.float },
+        { id: "location_name", dataType: tableau.dataTypeEnum.string },
+        { id: "payments_balance", dataType: tableau.dataTypeEnum.float },
+      ];
+      const eventsTable = {
+        id: "events",
+        alias: "Raiser's Edge NXT Events v1",
+        columns: eventsCols
+      };
 
-    // Events Table Schema
-    const eventsCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
-      { id: "name", dataType: tableau.dataTypeEnum.string },
-      { id: "start_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "start_time", dataType: tableau.dataTypeEnum.string },
-      { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "end_time", dataType: tableau.dataTypeEnum.string },
-      { id: "attending_count", dataType: tableau.dataTypeEnum.float },
-      { id: "invited_count", dataType: tableau.dataTypeEnum.float },
-      { id: "revenue", dataType: tableau.dataTypeEnum.float },
-      { id: "goal", dataType: tableau.dataTypeEnum.float },
-      { id: "percent_of_goal", dataType: tableau.dataTypeEnum.float },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "capacity", dataType: tableau.dataTypeEnum.float },
-      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "attended_count", dataType: tableau.dataTypeEnum.float },
-      { id: "category_id", dataType: tableau.dataTypeEnum.string },
-      { id: "category_name", dataType: tableau.dataTypeEnum.string },
-      { id: "category_inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "group_id", dataType: tableau.dataTypeEnum.string },
-      { id: "group_name", dataType: tableau.dataTypeEnum.string },
-      { id: "group_inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "expenses", dataType: tableau.dataTypeEnum.float },
-      { id: "net", dataType: tableau.dataTypeEnum.float },
-      { id: "location_name", dataType: tableau.dataTypeEnum.string },
-      { id: "payments_balance", dataType: tableau.dataTypeEnum.float },
-    ];
-    const eventsTable = {
-      id: "events",
-      alias: "Raiser's Edge NXT Events v1",
-      columns: eventsCols
-    };
+      // Funds Table Schema
+      const fundsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "category", dataType: tableau.dataTypeEnum.string },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "description", dataType: tableau.dataTypeEnum.string },
+        { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "goal", dataType: tableau.dataTypeEnum.float },
+        { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "start_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "type", dataType: tableau.dataTypeEnum.string }
+      ];
+      const fundsTable = {
+        id: "funds",
+        alias: "Raiser's Edge NXT Funds v1",
+        columns: fundsCols
+      };
 
-    // Funds Table Schema
-    const fundsCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "category", dataType: tableau.dataTypeEnum.string },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "description", dataType: tableau.dataTypeEnum.string },
-      { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "goal", dataType: tableau.dataTypeEnum.float },
-      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
-      { id: "start_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "type", dataType: tableau.dataTypeEnum.string }
-    ];
-    const fundsTable = {
-      id: "funds",
-      alias: "Raiser's Edge NXT Funds v1",
-      columns: fundsCols
-    };
+      // Campaigns Table Schema
+      const campaignsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "category", dataType: tableau.dataTypeEnum.string },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "description", dataType: tableau.dataTypeEnum.string },
+        { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "goal", dataType: tableau.dataTypeEnum.float },
+        { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "start_date", dataType: tableau.dataTypeEnum.datetime }
+      ];
+      const campaignsTable = {
+        id: "campaigns",
+        alias: "Raiser's Edge NXT Campaigns v1",
+        columns: campaignsCols
+      };
 
-    // Campaigns Table Schema
-    const campaignsCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "category", dataType: tableau.dataTypeEnum.string },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "description", dataType: tableau.dataTypeEnum.string },
-      { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "goal", dataType: tableau.dataTypeEnum.float },
-      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
-      { id: "start_date", dataType: tableau.dataTypeEnum.datetime }
-    ];
-    const campaignsTable = {
-      id: "campaigns",
-      alias: "Raiser's Edge NXT Campaigns v1",
-      columns: campaignsCols
-    };
+      // Appeals Table Schema
+      const appealsCols = [
+        { id: "id", dataType: tableau.dataTypeEnum.string },
+        { id: "category", dataType: tableau.dataTypeEnum.string },
+        { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
+        { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
+        { id: "description", dataType: tableau.dataTypeEnum.string },
+        { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
+        { id: "goal", dataType: tableau.dataTypeEnum.float },
+        { id: "inactive", dataType: tableau.dataTypeEnum.bool },
+        { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
+        { id: "start_date", dataType: tableau.dataTypeEnum.datetime }
+      ];
+      const appealsTable = {
+        id: "appeals",
+        alias: "Raiser's Edge NXT Appeals v1",
+        columns: appealsCols
+      };
 
-    // Appeals Table Schema
-    const appealsCols = [
-      { id: "id", dataType: tableau.dataTypeEnum.string },
-      { id: "category", dataType: tableau.dataTypeEnum.string },
-      { id: "date_added", dataType: tableau.dataTypeEnum.datetime },
-      { id: "date_modified", dataType: tableau.dataTypeEnum.datetime },
-      { id: "description", dataType: tableau.dataTypeEnum.string },
-      { id: "end_date", dataType: tableau.dataTypeEnum.datetime },
-      { id: "goal", dataType: tableau.dataTypeEnum.float },
-      { id: "inactive", dataType: tableau.dataTypeEnum.bool },
-      { id: "lookup_id", dataType: tableau.dataTypeEnum.string },
-      { id: "start_date", dataType: tableau.dataTypeEnum.datetime }
-    ];
-    const appealsTable = {
-      id: "appeals",
-      alias: "Raiser's Edge NXT Appeals v1",
-      columns: appealsCols
-    };
-
-    // Dynamic Query Table
-    if (cfg.endpoint === "query") {
-      fetch(`/getBlackbaudData?uid=${uid}&endpoint=query&queryId=${cfg.queryId}&schemaOnly=1`)
-        .then(r => r.json())
-        .then(headerArr => {
-          const queryCols = headerArr.map(h => ({
-            id: h.replace(/\W+/g, "_"),
-            alias: h,
-            dataType: tableau.dataTypeEnum.string
-          }));
-          schemaCallback([{
-            id: "query", alias: "Dynamic Query", columns: queryCols
-          }]);
-        })
-        .catch(e => tableau.abortWithError("Schema discovery failed: " + e));
-      return;       // prevent fall‑through
-    }
-
-    // Static Table Callbacks
-    switch (cfg.endpoint) {
-      case 'constituents':
-        schemaCallback([constituentsTable]);
-        break;
-
-      case 'actions':
-        schemaCallback([actionsTable]);
-        break;
-
-      case 'gifts':
-        schemaCallback([giftsTable]);
-        break;
-
-      case 'opportunities':
-        schemaCallback([opportunitiesTable]);
-        break;
-
-      case 'events':
-        schemaCallback([eventsTable]);
-        break;
-
-      case 'funds':
-        schemaCallback([fundsTable]);
-        break;
-
-      case 'campaigns':
-        schemaCallback([campaignsTable]);
-        break;
-
-      case 'appeals':
-        schemaCallback([appealsTable]);
-        break;
-
-      default:
-        tableau.abortWithError(
-          `Unsupported endpoint: ${cfg.endpoint}`
-        );
-    }
-  };
-
-  // Retrieve Table Data
-  myConnector.getData = function (table, doneCallback) {
-    // Extract the Tableau run phase - unused
-    //const isGather = tableau.phase === tableau.phaseEnum.gatherDataPhase;
-
-    if (tableau.phase === tableau.phaseEnum.interactivePhase) {
-      doneCallback();
-      return;
-    }
-
-    // Parse the user's chosen cfg from tableau.connectionData
-    const cfg = JSON.parse(tableau.connectionData);
-    // e.g., { endpoint: "constituents", recordId: "123", limit: "500", offset: "0", maxPages: "2", etc... }
-
-    // Determine which table the WDC is currently asking for
-    const tableId = table.tableInfo.id;
-    // Call the server route /getBlackbaudData with parameters
-    let url = `http://localhost:3333/getBlackbaudData?uid=${uid}&endpoint=${tableId}`;
-    // add user typed parameters
-    if (cfg.recordId) url += `&id=${cfg.recordId}`;
-    if (cfg.queryId) url += `&query_id=${cfg.queryId}`;
-    if (cfg.limit) url += `&limit=${cfg.limit}`;
-    if (cfg.offset) url += `&offset=${cfg.offset}`;
-    if (cfg.maxPages) url += `&max_pages=${cfg.maxPages}`;
-    if (cfg.name) url += `&name=${cfg.name}`;
-    if (cfg.lookupId) url += `&lookup_id=${cfg.lookupId}`;
-    if (cfg.dateAdded) url += `&date_added=${cfg.dateAdded}`;
-    if (cfg.lastModified) url += `&last_modified=${cfg.lastModified}`;
-    if (cfg.includeInactive) url += `&include_inactive=true`;
-    if (cfg.searchText) url += `&search_text=${cfg.searchText}`;
-    if (cfg.sortToken) url += `&sort_token=${cfg.sortToken}`;
-    if (cfg.listId) url += `&list_id=${cfg.listId}`;
-    if (cfg.fundId) url += `&fund_id=${cfg.fundId}`;
-    if (cfg.eventId) url += `&event_id=${cfg.eventId}`;
-    if (cfg.constituentId) url += `&constituent_id=${cfg.constituentId}`;
-    if (cfg.category) url += `&category=${cfg.category}`;
-    if (cfg.startDateFrom) url += `&start_date_from=${cfg.startDateFrom}`;
-    if (cfg.startDateTo) url += `&start_date_to=${cfg.startDateTo}`;
-    if (cfg.fields) url += `&fields=${cfg.fields}`;
-    if (cfg.sort) url += `&sort=${cfg.sort}`;
-    if (cfg.group) url += `&group=${cfg.group}`;
-    if (cfg.statusCode) url += `&status_code=${cfg.statusCode}`;
-    if (cfg.continuationToken) url += `&continuation_token=${cfg.continuationToken}`;
-    if (cfg.postStatus) url += `&post_status=${cfg.postStatus}`;
-    if (cfg.giftType) url += `&gift_type=${cfg.giftType}`;
-    if (cfg.receiptStatus) url += `&receipt_status=${cfg.receiptStatus}`;
-    if (cfg.acknowledgementStatus) url += `&acknowledgement_status=${cfg.acknowledgementStatus}`;
-    if (cfg.campaignId) url += `&campaign_id=${cfg.campaignId}`;
-    if (cfg.appealId) url += `&appeal_id=${cfg.appealId}`;
-    if (cfg.startGiftDate) url += `&start_gift_date=${cfg.startGiftDate}`;
-    if (cfg.endGiftDate) url += `&end_gift_date=${cfg.endGiftDate}`;
-    if (cfg.startGiftAmount) url += `&start_gift_amount=${cfg.startGiftAmount}`;
-    if (cfg.endGiftAmount) url += `&end_gift_amount=${cfg.endGiftAmount}`;
-
-    // If "Query" table
-    if (tableId === 'query') {
-      const CHUNK = 15000;
-      let page = 0;
-
-      function fetchChunk() {
-        const chunkUrl = url + `&chunkSize=${CHUNK}&page=${page}`;
-        fetch(chunkUrl)
-          .then(r => r.json())
-          .then(obj => {
-            const rows = obj.value.map(rowObj => {
-              const out = {};
-              table.tableInfo.columns.forEach(col =>
-                (out[col.id] = rowObj[col.alias] ?? null)
-              );
-              return out;
-            });
-
-            if (rows.length) table.appendRows(rows);
-
-            // Keep going while we have a full slice
-            if (rows.length === CHUNK) {
-              page += 1;
-              fetchChunk();
-            } else {
-              doneCallback();
-            }
+      // Dynamic Query Table
+      if (cfg.endpoint === "query") {
+        authedJson(`/getBlackbaudData?endpoint=query&query_id=${cfg.queryId}&schemaOnly=1`)
+          .then(headerArr => {
+            const queryCols = headerArr.map(h => ({
+              id: h.replace(/\W+/g, "_"),
+              alias: h,
+              dataType: tableau.dataTypeEnum.string
+            }));
+            schemaCallback([{
+              id: "query", alias: "Dynamic Query", columns: queryCols
+            }]);
           })
-          .catch(e => tableau.abortWithError('Chunk fetch failed: ' + e));
+          .catch(e => tableau.abortWithError("Schema discovery failed: " + e));
+        return;       // prevent fall‑through
       }
-      fetchChunk();
-      return;
-    }
 
-    // Fetch all constituent records
-    if (tableId === 'constituents') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapConstituents);
-          const MAX_ROWS = 10000;
+      // Static Table Callbacks
+      switch (cfg.endpoint) {
+        case 'constituents':
+          schemaCallback([constituentsTable]);
+          break;
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+        case 'actions':
+          schemaCallback([actionsTable]);
+          break;
 
-    // Fetch all actions records (may not finish due to over 4 million records)
-    if (tableId === 'actions') {
+        case 'gifts':
+          schemaCallback([giftsTable]);
+          break;
 
-      /*------------------------------------------------------------------
-        0)  Don’t pull data during schema-gather / preview in Tableau UI
-      ------------------------------------------------------------------*/
+        case 'opportunities':
+          schemaCallback([opportunitiesTable]);
+          break;
+
+        case 'events':
+          schemaCallback([eventsTable]);
+          break;
+
+        case 'funds':
+          schemaCallback([fundsTable]);
+          break;
+
+        case 'campaigns':
+          schemaCallback([campaignsTable]);
+          break;
+
+        case 'appeals':
+          schemaCallback([appealsTable]);
+          break;
+
+        default:
+          tableau.abortWithError(
+            `Unsupported endpoint: ${cfg.endpoint}`
+          );
+      }
+    };
+
+    // Retrieve Table Data
+    myConnector.getData = function (table, doneCallback) {
+      console.log('WDC phase:', tableau.phase);
+      ensureCredentialsFromTableau();
+      authedFetch(`/status?sid=${encodeURIComponent(sid)}`).catch(()=>{});
+      // Extract the Tableau run phase - unused
+      //const isGather = tableau.phase === tableau.phaseEnum.gatherDataPhase;
+
       if (tableau.phase === tableau.phaseEnum.interactivePhase) {
         doneCallback();
         return;
       }
 
-      /*------------------------------------------------------------------
-        1)  SINGLE RECORD
-      ------------------------------------------------------------------*/
-      if (cfg.recordId && cfg.recordId.trim() !== '') {
-        /*  url already includes &id=… because it was added in the
-            generic builder a few lines above.                         */
-        fetch(url)
-          .then(r => r.json())
+      // Parse the user's chosen cfg from tableau.connectionData
+      const cfg = JSON.parse(tableau.connectionData);
+      // e.g., { endpoint: "constituents", recordId: "123", limit: "500", offset: "0", maxPages: "2", etc... }
+
+      // Determine which table the WDC is currently asking for
+      const tableId = table.tableInfo.id;
+      // Call the server route /getBlackbaudData with parameters
+      let url = `/getBlackbaudData?endpoint=${encodeURIComponent(tableId)}`;
+      // add user typed parameters
+      if (cfg.recordId) url += `&id=${cfg.recordId}`;
+      if (cfg.queryId) url += `&query_id=${cfg.queryId}`;
+      if (cfg.limit) url += `&limit=${cfg.limit}`;
+      if (cfg.offset) url += `&offset=${cfg.offset}`;
+      if (cfg.maxPages) url += `&max_pages=${cfg.maxPages}`;
+      if (cfg.name) url += `&name=${cfg.name}`;
+      if (cfg.lookupId) url += `&lookup_id=${cfg.lookupId}`;
+      if (cfg.dateAdded) url += `&date_added=${cfg.dateAdded}`;
+      if (cfg.lastModified) url += `&last_modified=${cfg.lastModified}`;
+      if (cfg.includeInactive) url += `&include_inactive=true`;
+      if (cfg.searchText) url += `&search_text=${cfg.searchText}`;
+      if (cfg.sortToken) url += `&sort_token=${cfg.sortToken}`;
+      if (cfg.listId) url += `&list_id=${cfg.listId}`;
+      if (cfg.fundId) url += `&fund_id=${cfg.fundId}`;
+      if (cfg.eventId) url += `&event_id=${cfg.eventId}`;
+      if (cfg.constituentId) url += `&constituent_id=${cfg.constituentId}`;
+      if (cfg.category) url += `&category=${cfg.category}`;
+      if (cfg.startDateFrom) url += `&start_date_from=${cfg.startDateFrom}`;
+      if (cfg.startDateTo) url += `&start_date_to=${cfg.startDateTo}`;
+      if (cfg.fields) url += `&fields=${cfg.fields}`;
+      if (cfg.sort) url += `&sort=${cfg.sort}`;
+      if (cfg.group) url += `&group=${cfg.group}`;
+      if (cfg.statusCode) url += `&status_code=${cfg.statusCode}`;
+      if (cfg.continuationToken) url += `&continuation_token=${cfg.continuationToken}`;
+      if (cfg.postStatus) url += `&post_status=${cfg.postStatus}`;
+      if (cfg.giftType) url += `&gift_type=${cfg.giftType}`;
+      if (cfg.receiptStatus) url += `&receipt_status=${cfg.receiptStatus}`;
+      if (cfg.acknowledgementStatus) url += `&acknowledgement_status=${cfg.acknowledgementStatus}`;
+      if (cfg.campaignId) url += `&campaign_id=${cfg.campaignId}`;
+      if (cfg.appealId) url += `&appeal_id=${cfg.appealId}`;
+      if (cfg.startGiftDate) url += `&start_gift_date=${cfg.startGiftDate}`;
+      if (cfg.endGiftDate) url += `&end_gift_date=${cfg.endGiftDate}`;
+      if (cfg.startGiftAmount) url += `&start_gift_amount=${cfg.startGiftAmount}`;
+      if (cfg.endGiftAmount) url += `&end_gift_amount=${cfg.endGiftAmount}`;
+
+      // If "Query" table
+      if (tableId === 'query') {
+        const CHUNK = parseInt(cfg.chunkSize || "15000", 10);
+        let page = 0;
+        let bulkId;
+
+        // 1) Kick off the bulk job and get temp id + schema header count (rows)
+        authedFetch(`/bulk/query/init?query_id=${encodeURIComponent(cfg.queryId)}`)
+          .then(r => {
+            if (!r.ok) throw new Error(`Bulk query init failed: ${r.statusText}`);
+            return r.json();
+          })
+          .then(init => {
+            bulkId = init.id;
+            // 2) Loop chunks
+            fetchChunk();
+          })
+          .catch(e => tableau.abortWithError('Query bulk init failed: ' + e));
+
+        function fetchChunk() {
+          authedFetch(`/bulk/query/chunk?id=${bulkId}&page=${page}&chunkSize=${CHUNK}`)
+            .then(r => r.json())
+            .then(obj => {
+              if (!obj.value.length) return doneCallback();
+
+              // Map CSV rows (already objects) onto table columns
+              const rows = obj.value.map(rowObj => {
+                const out = {};
+                table.tableInfo.columns.forEach(col => {
+                  // col.id may be a sanitized version of original header
+                  out[col.id] = rowObj[col.alias || col.id] ?? rowObj[col.id] ?? null;
+                });
+                return out;
+              });
+
+              table.appendRows(rows);
+              if (obj.value.length === CHUNK) { page += 1; fetchChunk(); }
+              else {
+                // Optional: purge temp
+                authedFetch(`/bulk/query/purge?id=${bulkId}`, { method: 'DELETE' }).finally(doneCallback);
+              }
+            })
+            .catch(e => tableau.abortWithError('Query chunk fetch failed: ' + e));
+        }
+
+        return;
+      }
+
+      // Fetch all constituent records
+      if (tableId === 'constituents') {
+        authedJson(url)
           .then(data => {
-            table.appendRows([mapActions(data.value[0])]);   // value is a 1-element array
+            const rows = data.value.map(mapConstituents);
+            const MAX_ROWS = 10000;
+
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
             doneCallback();
           })
           .catch(e => tableau.abortWithError(e));
         return;
       }
 
-      /*------------------------------------------------------------------
-        2)  BULK DOWNLOAD  (cfg.fetchAll === true)
-      ------------------------------------------------------------------*/
-      if (cfg.fetchAll) {
-        const CHUNK = parseInt(cfg.chunkSize || "15000", 10)
-        let page = 0;
-        let bulkId;
+      // Fetch all actions records (may not finish due to over 4 million records)
+      if (tableId === 'actions') {
 
-        // --- init ---
-        fetch(`http://localhost:3333/bulk/actions?uid=${uid}&chunkSize=${CHUNK}`)
-          .then(r => {
-            if (!r.ok) throw new Error(`Bulk init failed: ${r.statusText}`);
-            return r.json();
-          })
-          .then(init => {
-            bulkId = init.id;
-            console.log(`Bulk init OK, id=${bulkId}, totalRows=${init.rows}`);
-            fetchChunk();
-          })
-          .catch(err => tableau.abortWithError('Bulk init failed: ' + err));
-
-        // --- loop ---
-        function fetchChunk() {
-          fetch(`http://localhost:3333/bulk/actions/chunk?uid=${uid}&id=${bulkId}&page=${page}&chunkSize=${CHUNK}`)
-            .then(r => r.json())
-            .then(obj => {
-              if (!obj.value.length) return doneCallback();
-
-              table.appendRows(obj.value.map(mapActions));
-
-              // keep paging until slice < CHUNK
-              if (obj.value.length === CHUNK) {
-                page += 1;
-                fetchChunk();
-              } else {
-                doneCallback();
-              }
-            })
-            .catch(err => tableau.abortWithError('Chunk fetch failed: ' + err));
+        /*------------------------------------------------------------------
+          0)  Don’t pull data during schema-gather / preview in Tableau UI
+        ------------------------------------------------------------------*/
+        if (tableau.phase === tableau.phaseEnum.interactivePhase) {
+          doneCallback();
+          return;
         }
+
+        /*------------------------------------------------------------------
+          1)  SINGLE RECORD
+        ------------------------------------------------------------------*/
+        if (cfg.recordId && cfg.recordId.trim() !== '') {
+          /*  url already includes &id=… because it was added in the
+              generic builder a few lines above.                         */
+          authedJson(url)
+            .then(data => {
+              table.appendRows([mapActions(data.value[0])]);   // value is a 1-element array
+              doneCallback();
+            })
+            .catch(e => tableau.abortWithError(e));
+          return;
+        }
+
+        /*------------------------------------------------------------------
+          2)  BULK DOWNLOAD  (cfg.fetchAll === true)
+        ------------------------------------------------------------------*/
+        if (cfg.fetchAll) {
+          const CHUNK = parseInt(cfg.chunkSize || "15000", 10)
+          let page = 0;
+          let bulkId;
+
+          // --- init ---
+          authedFetch(`/bulk/actions?chunkSize=${CHUNK}`)
+            .then(r => {
+              if (!r.ok) throw new Error(`Bulk init failed: ${r.statusText}`);
+              return r.json();
+            })
+            .then(init => {
+              bulkId = init.id;
+              console.log(`Bulk init OK, id=${bulkId}, totalRows=${init.rows}`);
+              fetchChunk();
+            })
+            .catch(err => tableau.abortWithError('Bulk init failed: ' + err));
+
+          // --- loop ---
+          function fetchChunk() {
+            authedFetch(`/bulk/actions/chunk?id=${bulkId}&page=${page}&chunkSize=${CHUNK}`)
+              .then(r => r.json())
+              .then(obj => {
+                if (!obj.value.length) return doneCallback();
+                table.appendRows(obj.value.map(mapActions));
+                if (obj.value.length === CHUNK) { page += 1; fetchChunk(); }
+                else { doneCallback(); }
+              })
+              .catch(err => tableau.abortWithError('Chunk fetch failed: ' + err));
+          }
+          return;
+        }
+
+        /*------------------------------------------------------------------
+          3)  PAGED LIST  (default)
+        ------------------------------------------------------------------*/
+        authedJson(url)                              // url already has limit/offset/filters
+          .then(data => {
+            const rows = data.value.map(mapActions);
+            const MAX_ROWS = 10000;             // avoid 64 k row burst limits
+
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+
         return;
       }
 
-      /*------------------------------------------------------------------
-        3)  PAGED LIST  (default)
-      ------------------------------------------------------------------*/
-      fetch(url)                              // url already has limit/offset/filters
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapActions);
-          const MAX_ROWS = 10000;             // avoid 64 k row burst limits
+      // Fetch all gift records
+      if (tableId === 'gifts') {
+        authedJson(url)
+          .then(data => {
+            const rows = data.value.map(mapGifts);
+            const MAX_ROWS = 10000;
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
 
-      return;
-    }
+      // Fetch all opportunities records
+      if (tableId === 'opportunities') {
+        authedJson(url)
+          .then(data => {
+            const rows = data.value.map(mapOpportunities);
+            const MAX_ROWS = 10000;
 
-    // Fetch all gift records
-    if (tableId === 'gifts') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapGifts);
-          const MAX_ROWS = 10000;
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+      // Fetch all events records
+      if (tableId === 'events') {
+        authedJson(url)
+          .then(data => {
+            const rows = data.value.map(mapEvents);
+            const MAX_ROWS = 10000;
 
-    // Fetch all opportunities records
-    if (tableId === 'opportunities') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapOpportunities);
-          const MAX_ROWS = 10000;
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+      // Fetch all funds records
+      if (tableId === 'funds') {
+        authedJson(url)
+          .then(data => {
+            const rows = data.value.map(mapFunds);
+            const MAX_ROWS = 10000;
 
-    // Fetch all events records
-    if (tableId === 'events') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapEvents);
-          const MAX_ROWS = 10000;
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+      // Fetch all campaigns records
+      if (tableId === 'campaigns') {
+        authedJson(url)
+          .then(data => {
+            const rows = data.value.map(mapCampaigns);
+            const MAX_ROWS = 10000;
 
-    // Fetch all funds records
-    if (tableId === 'funds') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapFunds);
-          const MAX_ROWS = 10000;
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+      // Fetch all appeals records
+      if (tableId === 'appeals') {
+        authedJson(url)
+          .then(data => {
+            const rows = data.value.map(mapAppeals);
+            const MAX_ROWS = 10000;
 
-    // Fetch all campaigns records
-    if (tableId === 'campaigns') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapCampaigns);
-          const MAX_ROWS = 10000;
+            for (let i = 0; i < rows.length; i += MAX_ROWS) {
+              table.appendRows(rows.slice(i, i + MAX_ROWS));
+            }
+            doneCallback();
+          })
+          .catch(e => tableau.abortWithError(e));
+        return;
+      }
 
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
+      // // Single-page fetch for static tables [Now unused and duplicate]
+      // else if (tableId === 'constituents') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapConstituents);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'actions') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapActions);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'gifts') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapGifts);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'opportunities') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapOpportunities);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'events') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapEvents);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'funds') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapFunds);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'campaigns') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapCampaigns);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+      // else if (tableId === 'appeals') {
+      //   fetch(url)
+      //     .then(r => r.json())
+      //     .then(data => {
+      //       const rows = data.value.map(mapAppeals);
+      //       table.appendRows(rows);
+      //       doneCallback();
+      //     })
+      //     .catch(e => tableau.abortWithError(e));
+      //   return;
+      // }
+    };
 
-    // Fetch all appeals records
-    if (tableId === 'appeals') {
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          const rows = data.value.map(mapAppeals);
-          const MAX_ROWS = 10000;
-
-          for (let i = 0; i < rows.length; i += MAX_ROWS) {
-            table.appendRows(rows.slice(i, i + MAX_ROWS));
-          }
-          doneCallback();
-        })
-        .catch(e => tableau.abortWithError(e));
-      return;
-    }
-
-    // // Single-page fetch for static tables [Now unused and duplicate]
-    // else if (tableId === 'constituents') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapConstituents);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'actions') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapActions);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'gifts') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapGifts);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'opportunities') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapOpportunities);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'events') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapEvents);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'funds') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapFunds);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'campaigns') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapCampaigns);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-    // else if (tableId === 'appeals') {
-    //   fetch(url)
-    //     .then(r => r.json())
-    //     .then(data => {
-    //       const rows = data.value.map(mapAppeals);
-    //       table.appendRows(rows);
-    //       doneCallback();
-    //     })
-    //     .catch(e => tableau.abortWithError(e));
-    //   return;
-    // }
-  };
-
-  tableau.registerConnector(myConnector);
+    tableau.registerConnector(myConnector);
+  } else {
+    console.log('[WDC] Not running in Tableau - skipping connector registration');
+  }
 })();

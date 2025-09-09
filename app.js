@@ -1,7 +1,7 @@
 // -------------------------------------------------- //
 // Module Dependencies & Variables
 // -------------------------------------------------- //
-// require('dotenv').config();
+require('dotenv').config();
 
 const cookieParser = require('cookie-parser');
 const http = require('http');
@@ -17,6 +17,29 @@ const { promisify } = require('util');
 const { parse: parseCsv } = require('csv-parse/sync'); // Requires: npm i csv-parse
 const { v4: uuidv4 } = require('uuid'); // Requires: npm i uuid
 const { stringify } = require('csv-stringify'); // Requires: npm i csv-stringify
+const Redis = require('ioredis'); // Requires: npm i ioredis
+const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379'); // Connect to Redis
+const helmet = require('helmet'); // Requires: npm i helmet
+const rateLimit = require('express-rate-limit'); // Requires: npm i express-rate-limit
+// ---- Rate limiters ----
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,      // 15 minutes
+  max: 60,                        // 60 requests per 15 min per IP
+  standardHeaders: true,
+  legacyHeaders: false
+});
+const dataLimiter = rateLimit({
+  windowMs: 60 * 1000,            // 1 minute
+  max: 120,                       // 120 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false
+});
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100
+});
+const SINGLE_USER = process.env.SINGLE_USER === 'true';
+const GLOBAL_UID = 'single-user';
 
 const requestPromise = promisify(request);
 
@@ -31,34 +54,64 @@ const config = {
 const clientID = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const subscriptionKey = process.env.SUBSCRIPTION_KEY;
-const redirectURI = `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`;
+const redirectURI = process.env.REDIRECT_URI || `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`;
 
 // -------------------------
 // Express App
 // -------------------------
 app.set('port', config.PORT);
-app.use(cookieParser());
-app.use(express.static(__dirname + '/public'));
-app.use(cors());
-const tokenCache = new Map();   // key => { access, refresh, exp }
-function setTokens(key, tokObj) { tokenCache.set(key, tokObj); }
-function getTokens(key) { return tokenCache.get(key); }
-function haveValidTokens(key) {
-  const t = tokenCache.get(key);
-  return t && t.exp > Date.now();
+app.set('trust proxy', 1); // trust the reverse proxy (e.g. Heroku) FOR FUTURE
+if (process.env.FORCE_HTTPS === 'true') {
+  app.use((req, res, next) => {
+    const host = req.headers.host || '';
+    const isLocal = host.startsWith('localhost') || host.startsWith('127.0.0.1');
+    if (isLocal || req.secure || req.headers['x-forwarded-proto'] === 'https') return next();
+    res.redirect(301, `https://${host}${req.originalUrl}`);
+  });
 }
 
-// Clear up token cache
-// run once at startup
-setInterval(() => {
-  const now = Date.now();
-  for (const [uid, tok] of tokenCache) {
-    if (tok.exp + 24 * 60 * 60 * 1000 < now) {   // 24 h grace period
-      tokenCache.delete(uid);
-      console.log('[gc] purged tokens for', uid);
+
+app.use((req, res, next) => {
+  req.id = uuidv4();
+  res.setHeader('X-Request-Id', req.id);
+  next();
+});
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://ajax.googleapis.com", "https://cdn.jsdelivr.net", "https://connectors.tableau.com", "https://cdnjs.cloudflare.com"],
+      styleSrc: ["'self'", "https://cdn.jsdelivr.net"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'", "https://oauth2.sky.blackbaud.com", "https://api.sky.blackbaud.com"],
+      frameAncestors: ["'self'"],
+      baseUri: ["'none'"],
+      objectSrc: ["'none'"],
+      formAction: ["'self'", "https://oauth2.sky.blackbaud.com"]
     }
-  }
-}, 60 * 60 * 1000); // every hour
+  },
+  frameguard: { action: 'sameorigin' },
+  hsts: process.env.NODE_ENV === 'production' ? { maxAge: 15552000, includeSubDomains: true, preload: true } : false
+}));
+
+
+app.use(cookieParser());
+app.use(express.static(__dirname + '/public'));
+const allowed = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+// Example: CORS_ORIGIN="http://localhost:8080,http://localhost:3333"
+app.use(cors({
+  origin: allowed.length ? allowed : [/^http:\/\/localhost:\d+$/],
+  credentials: false
+}));
+redis.on('connect', () => console.log('[redis] connected'));
+redis.on('error', (err) => console.error('[redis] error', err));
+app.disable('x-powered-by'); // Disable X-Powered-By header
+
+const crypto = require('crypto');
+const b64url = b => b.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const sha256 = s => crypto.createHash('sha256').update(s).digest();
 
 // -------------------------------------------------- //
 // Helper Functions
@@ -77,54 +130,172 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Extract the header row from the CSV results
-function csvHeader(csvText) {
-  return csvText.split('\n')[0].trim().split(',');
+// HTTP Request with Retry Logic
+async function httpRequestWithRetry(opts, {
+  maxRetries = 5,
+  baseDelayMs = 500
+} = {}) {
+  let attempt = 0;
+  while (true) {
+    const resp = await requestPromise(opts);
+
+    // Success
+    if (resp.statusCode < 400) return resp;
+
+    // retry?
+    const retryable = resp.statusCode === 429 || resp.statusCode >= 500;
+    if (!retryable || attempt >= maxRetries) return resp;
+
+    const retryAfter = Number(resp.headers?.['retry-after'] || 0);
+    const backoff = retryAfter > 0
+      ? retryAfter * 1000
+      : baseDelayMs * Math.pow(2, attempt); // exponential backoff
+
+    await sleep(backoff);
+    attempt += 1;
+  }
 }
 
+// Extract the header row from the CSV results
+function csvHeader(csvText) {
+  const { parse } = require('csv-parse/sync');
+  return parse(csvText, { to_line: 1 })[0];
+}
+
+// Convert a string to a boolean, with an optional fallback
 function toBool(v, fallback = false) {
   if (v === undefined) return fallback;
   return String(v).toLowerCase() === 'true';
 }
 
-// Ensure the tokens remain valid on long calls after they expire
-async function ensureValidToken(uid) {
-  const tok = getTokens(uid);
-  if (!tok) throw new Error('Not authenticated');
-
-  // refresh 60 s early
-  if (Date.now() >= tok.exp - 60_000) {
-    const resp = await requestPromise({
-      method: 'POST',
-      url: 'https://oauth2.sky.blackbaud.com/token',
-      form: {
-        grant_type:    'refresh_token',
-        refresh_token: tok.refresh,
-        client_id:     clientID,
-        client_secret: clientSecret
-      },
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
-
-    const body = JSON.parse(resp.body);
-    setTokens(uid, {
-      access:  body.access_token,
-      refresh: body.refresh_token,
-      exp:     Date.now() + body.expires_in * 1000
-    });
-    return body.access_token;
-  }
-
-  return tok.access;
+// Safely log URLs, redacting continuation tokens
+function safeLogUrl(u) {
+  try {
+    const url = new URL(u);
+    if (url.searchParams.has('continuation_token')) {
+      url.searchParams.set('continuation_token', 'REDACTED');
+    }
+    return url.toString();
+  } catch { return u; }
 }
 
+// Store the access and refresh tokens in Redis cache
+async function setTokens(uid, tok) {
+  // store access, refresh, and expiration in the cache (ms since epoch)
+  await redis.hset(`session:${uid}`, {
+    access: tok.access,
+    refresh: tok.refresh,
+    exp:     String(tok.exp)
+  });
+  // optional: store TTL to a bit beyond access-token expiry
+  const ttlSeconds = Math.max(60, Math.ceil((tok.exp - Date.now()) / 1000) + 900);
+  await redis.expire(`session:${uid}`, ttlSeconds);
+}
+
+// Retrieve the tokens for a user ID
+async function getTokens(uid) {
+  const data = await redis.hgetall(`session:${uid}`);
+  if (!data || !data.access) return null;
+  return { access: data.access, refresh: data.refresh, exp: Number(data.exp) };
+}
+
+// Check if the user has valid tokens
+async function haveValidTokens(uid) {
+  const t = await getTokens(uid);
+  return !!(t && t.exp > Date.now());
+}
+
+async function withRefreshLock(uid, fn) {
+  const lockKey = `session:${uid}:refresh_lock`;
+  const gotLock = await redis.set(lockKey, '1', 'NX', 'PX', 30000); // 30s
+  if (gotLock) {
+    try { return await fn(); }
+    finally { await redis.del(lockKey); }
+  } else {
+    // someone else is refreshing; wait for a bit until expiry or updates land
+    const start = Date.now();
+    while (Date.now() - start < 10000) { // wait up to 10s
+      await sleep(300);
+      const t = await getTokens(uid);
+      if (t && t.exp > Date.now() + 60_000) return t.access; // looks refreshed
+    }
+    // last resort: run fn
+    return await fn();
+  }
+}
+
+
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
+if (!process.env.JWT_SECRET || JWT_SECRET === 'dev-only-change-me') {
+  throw new Error('JWT_SECRET required (set a strong value in env)');
+}
+
+// Issue a JWT token for the user ID
+function issueJwt(uid) {
+  return jwt.sign({ uid, aud: 'bb-wdc', iss: 'your-app' }, JWT_SECRET, { expiresIn: '30m' });
+}
+
+// Extract the user ID from the request, if present
+function uidFromReq(req) {
+  // prefer Bearer token, fallback to ?tok or ?uid
+  const h = req.headers['authorization'] || '';
+  const bearer = h.startsWith('Bearer ') ? h.slice(7) : null;
+  const tok = bearer || req.query.tok || null;
+  if (tok) {
+    try { return jwt.verify(tok, JWT_SECRET).uid; } catch {
+      /* invalid */
+    }
+  }
+  return null;
+}
+
+// Ensure the tokens remain valid on long calls after they expire
+async function ensureValidToken(uid) {
+  const tok = await getTokens(uid);
+  if (!tok) throw new Error('Not authenticated');
+
+  // Refresh 60s early
+  if (Date.now() >= tok.exp - 60_000) {
+    return await withRefreshLock(uid, async () => {
+      // re-check after acquiring lock
+      const curr = await getTokens(uid);
+      if (curr && curr.exp > Date.now() + 60_000) return curr.access;
+  
+      const resp = await httpRequestWithRetry({
+        method: 'POST',
+        url: 'https://oauth2.sky.blackbaud.com/token',
+        form: {
+          grant_type: 'refresh_token',
+          refresh_token: tok.refresh,
+          client_id: clientID,
+          client_secret: clientSecret
+        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+  
+      if (resp.statusCode !== 200) {
+        throw new Error(`Failed to refresh token: ${resp.statusCode} ⇒ ${resp.body}`);
+      }
+      const body = JSON.parse(resp.body);
+      await setTokens(uid, {
+        access:  body.access_token,
+        refresh: body.refresh_token || tok.refresh,
+        exp:     Date.now() + body.expires_in * 1000
+      });
+      return body.access_token;
+    });
+  }
+  
+  return tok.access;
+}
 
 // Fetch a single API record 
 async function fetchSingleRecord(uid, url) {
   // 3️⃣ Ensure we have a fresh access token
   const access = await ensureValidToken(uid);
 
-  const resp = await requestPromise({
+  const resp = await httpRequestWithRetry({
     method: 'GET',
     url: url,
     headers: {
@@ -150,7 +321,7 @@ async function fetchMultipleRecords(uid, url, allItems = [], pageCount = 0, maxP
   // 3️⃣ Always refresh before each page
   const access = await ensureValidToken(uid);
 
-  const resp = await requestPromise({
+  const resp = await httpRequestWithRetry({
     method: 'GET',
     url: url,
     headers: {
@@ -164,7 +335,7 @@ async function fetchMultipleRecords(uid, url, allItems = [], pageCount = 0, maxP
   }
 
   const data = JSON.parse(resp.body);
-  if (pageCount === 0) console.log('[gift] first page rows', data.value.length);
+  if (pageCount === 0) console.log('first page rows', data.value.length);
   if (Array.isArray(data.value) && data.value.length) {
     allItems.push(...data.value);
   }
@@ -214,86 +385,144 @@ app.get('/', (_, res) => res.redirect('/wdc.html'));
 // });
 
 // New Authentication Path
-app.get('/auth', (_, res) => {
-  const scopes = [
-    'rnxt.w',     // read/write RE-NXT APIs
-    'rnxt.r',
-    'identity_basic',    // calls the identity service
-    'offline_access'     // for the refresh-token
-  ].join(' ');
+app.use(['/auth', config.REDIRECT_PATH, '/getBlackbaudData'], limiter); // Rate limit auth and data retrieval paths
+app.use(
+  ['/bulk/query/init','/bulk/query/chunk','/bulk/actions','/bulk/actions/chunk'],
+  dataLimiter
+);
 
-  const oauthUrl = [
-    'https://oauth2.sky.blackbaud.com/authorization',
-    `?response_type=code`,
-    `&client_id=${encodeURIComponent(clientID)}`,
-    `&redirect_uri=${encodeURIComponent(redirectURI)}`,
-    `&scope=${encodeURIComponent(scopes)}`
-  ].join('');
+app.get('/auth', async (req, res) => {
+  const sid = req.query.sid || uuidv4();
+  const codeVerifier  = b64url(crypto.randomBytes(32));
+  const codeChallenge = b64url(sha256(codeVerifier));
 
-  console.log("Redirecting to OAuth URL: " + oauthUrl);
-  res.redirect(oauthUrl)
-})
+  await redis.hmset(`oauth:${sid}`, {
+    code_verifier: codeVerifier,
+    created_at: Date.now().toString()
+  });
+  await redis.expire(`oauth:${sid}`, 900); // 15 minutes
 
+  console.log('[auth] start', { sid });
+
+  const scopes = 'rnxt.r identity_basic offline_access';
+  const oauthUrl =
+    'https://oauth2.sky.blackbaud.com/authorization' +
+    `?response_type=code&client_id=${encodeURIComponent(clientID)}` +
+    `&redirect_uri=${encodeURIComponent(redirectURI)}` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&state=${encodeURIComponent(sid)}` +
+    `&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+
+  res.redirect(oauthUrl);
+});
+
+// redirect handler
 app.get(config.REDIRECT_PATH, async (req, res) => {
-  const authCode = req.query.code;
+  const state = req.query.state; // raw state from IdP
+  const code  = req.query.code;
+
+  if (!state || !code) {
+    console.error('[redirect] missing code/state', { state, codePresent: !!code });
+    return res.status(400).send('Missing code/state');
+  }
+
+  // MUST use raw state to fetch the PKCE entry
+  const pending = await redis.hgetall(`oauth:${state}`);
+  const ttl = await redis.ttl(`oauth:${state}`);
+
+  if (!pending || !pending.code_verifier) {
+    console.error('[redirect] invalid/expired state', { state, hasVerifier: !!pending?.code_verifier, ttl });
+    return res
+      .status(400)
+      .send('<h1>Sign-in expired</h1><p>Please go back to the connector and click “Connect to Blackbaud” again.</p>');
+  }
+
+  console.log('[redirect] exchanging code', { state, ttl });
 
   try {
-    const resp = await requestPromise({
+    const resp = await httpRequestWithRetry({
       method: 'POST',
       url: 'https://oauth2.sky.blackbaud.com/token',
       form: {
-        client_id:     clientID,
-        client_secret: clientSecret,
-        redirect_uri:  redirectURI,
-        code:          authCode,
-        grant_type:    'authorization_code'
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectURI,
+        client_id: clientID,
+        code_verifier: pending.code_verifier,
+        // Blackbaud allows client_secret; PKCE doesn’t require it, but it’s fine to keep:
+        client_secret: clientSecret
       },
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000
     });
+
+    await redis.del(`oauth:${state}`);
+
+    if (resp.statusCode !== 200) {
+      console.error('[redirect] token exchange failed', { status: resp.statusCode, body: resp.body?.slice?.(0, 200) });
+      return res.status(502).send('OAuth exchange failed');
+    }
 
     const tok = JSON.parse(resp.body);
 
-    //const userId = await fetchUserId(tok.access_token); //404 error (07/31/25)
-    const uid = uuidv4();
+    // Choose the uid we’ll store long-lived BB tokens under:
+    const uid = SINGLE_USER ? GLOBAL_UID : state;
 
-    setTokens(uid, {
+    await setTokens(uid, {
       access:  tok.access_token,
       refresh: tok.refresh_token,
       exp:     Date.now() + tok.expires_in * 1000
     });
 
-    // send the uid back to the browser
-    res.redirect(`/wdc.html?uid=${encodeURIComponent(uid)}`);
-  } catch (err) {
-    console.error('OAuth exchange failed', err);
-    res.status(500).send('OAuth exchange failed');
+    // Bootstrap window so the Desktop WDC can mint its short-lived JWT using only sid
+    await redis.set(`jwt_bootstrap:${state}`, '1', 'EX', 180); // 3 min
+
+    console.log('[redirect] success', { state, uid, expiresIn: tok.expires_in });
+
+    // Send the browser somewhere harmless; Desktop will call /status with sid=state
+    res.redirect(`/wdc.html?sid=${encodeURIComponent(state)}`);
+  } catch (e) {
+    console.error('[redirect] exception', e);
+    return res.status(500).send('OAuth exchange error');
   }
 });
 
 
 // Authentication Status
-app.get('/status', (req, res) => {
-  const uid = req.query.uid;
-
-  // client passed a uid -> normal path
-  if (uid) {
-    res.json({ authenticated: haveValidTokens(uid) });
+app.get('/status', async (req, res) => {
+  // If caller already has a JWT, honor it
+  const uid = uidFromReq(req);
+  if (uid && await haveValidTokens(uid)) {
+    return res.json({ authenticated: true, tok: issueJwt(uid) });
   }
 
-  // client did NOT pass a uid -> see if exactly one valid session exists
-  const validUids = [...tokenCache.keys()].filter(haveValidTokens);
-
-  if (validUids.length === 1) {
-    return res.json({ authenticated: true, uid: validUids[0] });
+  // WDC Desktop first-time bootstrapping via sid
+  const sid = req.query.sid;
+  if (sid && await redis.get(`jwt_bootstrap:${sid}`)) {
+    // If you stored BB tokens under SINGLE_USER, hand back a JWT for GLOBAL_UID.
+    // Otherwise, tokens are under the sid/state itself.
+    const handoffUid = SINGLE_USER ? GLOBAL_UID : sid;
+    if (await haveValidTokens(handoffUid)) {
+      return res.json({ authenticated: true, tok: issueJwt(handoffUid) });
+    }
   }
 
-  // zero / multiple valid sessions - force explicit sign-in / selection
-  res.json({ authenticated: false });
+  // Optional fallback: if SINGLE_USER is enabled and user already authenticated
+  if (SINGLE_USER && await haveValidTokens(GLOBAL_UID)) {
+    return res.json({ authenticated: true, tok: issueJwt(GLOBAL_UID) });
+  }
+
+  return res.json({ authenticated: false });
 });
 
 
 // API Retrieval Path (Page logging for validation)
-app.use('/getBlackbaudData', (req, res, next) => {
+app.use('/getBlackbaudData', async (req, res, next) => {
+  let uid = uidFromReq(req);
+  if (!uid && SINGLE_USER) uid = GLOBAL_UID; // single user mode
+  if (!uid || !(await haveValidTokens(uid))) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  } 
   console.log('[debug] query params:', req.query);
   const DEFAULT_LIMIT = 5000;
   const DEFAULT_OFFSET = 0;
@@ -306,11 +535,84 @@ app.use('/getBlackbaudData', (req, res, next) => {
   next();
 });
 
+// Dynamic Query Path
+app.get('/bulk/query/init', async (req, res) => {
+  const uid = uidFromReq(req);
+  if (!uid || !(await haveValidTokens(uid))) return res.status(401).json({ error: 'Not authenticated' });
+  const queryId = parseInt(req.query.query_id || req.query.queryId, 10);
+  if (!queryId) return res.status(400).send('Missing queryId');
+
+  const access = await ensureValidToken(uid);
+  const startBody = { id: queryId, ux_mode: 'Asynchronous', output_format: 'Csv', formatting_mode: 'UI', sql_generation_mode: 'Query', use_static_query_id_set: false };
+  const start = await httpRequestWithRetry({
+    method: 'POST',
+    url: 'https://api.sky.blackbaud.com/query/queries/executebyid?product=RE&module=None',
+    headers: { Authorization: `Bearer ${access}`, 'Bb-Api-Subscription-Key': subscriptionKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(startBody)
+  });
+  const jobId = JSON.parse(start.body).id;
+
+  // poll
+  let status;
+  do {
+    await sleep(15000);
+    const poll = await httpRequestWithRetry({
+      method: 'GET',
+      url: `https://api.sky.blackbaud.com/query/jobs/${jobId}?product=RE&module=None&include_read_url=OnceCompleted&content_disposition=Attachment`,
+      headers: { Authorization: `Bearer ${access}`, 'Bb-Api-Subscription-Key': subscriptionKey }
+    });
+    status = JSON.parse(poll.body);
+    if (status.status === 'Failed') return res.status(500).send('Query job failed');
+  } while (status.status !== 'Completed');
+
+  // download once → save tmp
+  const buf = (await httpRequestWithRetry({ method: 'GET', url: status.sas_uri, encoding: null })).body;
+  const tmpId = uuidv4();
+  const file = path.join(os.tmpdir(), `query_${tmpId}.csv`);
+  fs.writeFileSync(file, buf);
+
+  setTimeout(() => fs.unlink(file, () => {}), 30 * 60 * 1000); // delete after 30 minutes
+
+  const header = csvHeader(buf.toString('utf8'));
+  const totalRows = parseCsv(buf.toString('utf8'), { columns: true, skip_empty_lines: true }).length; // or scan/count lines
+
+  res.json({ id: tmpId, rows: totalRows, columns: header });
+});
+
+// --- chunk ---
+app.get('/bulk/query/chunk', (req, res) => {
+  const { id, page = 0, chunkSize = 15000 } = req.query;
+  const file = path.join(os.tmpdir(), `query_${id}.csv`);
+  if (!fs.existsSync(file)) return res.status(404).send('file expired');
+
+  const start = Number(page) * Number(chunkSize);
+  const end   = start + Number(chunkSize);
+
+  const rows = [];
+  let i = -1;
+
+  const parse = require('csv-parse');
+  const parser = fs.createReadStream(file).pipe(parse({ columns: true }));
+  parser.on('data', (row) => {
+    i += 1;
+    if (i < start) return;
+    if (i >= end) { parser.destroy(); return; }   // ← stop reading the rest
+    rows.push(row);
+  }).on('end', () => res.json({ value: rows, page: Number(page), chunkSize: Number(chunkSize) }));
+});
+
+
+app.delete('/bulk/query/purge', (req, res) => {
+  const { id } = req.query;
+  const file = path.join(os.tmpdir(), `query_${id}.csv`);
+  fs.unlink(file, (e) => res.status(e ? 404 : 204).end());
+});
+
 // API Retrieval Path for All Action Records
 // streams all Action rows to a temp CSV on the server
 app.get('/bulk/actions', async (req, res) => {
-  const uid = req.query.uid;
-  if (!haveValidTokens(uid)) {
+  const uid = uidFromReq(req);
+  if (!uid || !(await haveValidTokens(uid))) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
@@ -330,6 +632,7 @@ app.get('/bulk/actions', async (req, res) => {
   let next = `https://api.sky.blackbaud.com/constituent/v1/actions?limit=${LIMIT}`;
   const tmpId = uuidv4();
   const tmpFile = path.join(os.tmpdir(), `actions_${tmpId}.csv`);
+  const TTL_MS = 30 * 60 * 1000; // 30 minutes
 
   // CSV stream with explicit columns ---------------------------------
   const out = stringify({ header: true, columns: ACTION_COLS });
@@ -345,14 +648,15 @@ app.get('/bulk/actions', async (req, res) => {
       // Log each page to be requested for testing
       console.log(`[/bulk/actions] fetching page #${pageCount} at ${new Date().toISOString()}`);
 
-      const page = await rp({
-        uri: next,
-        json: true,
+      const pageResp = await httpRequestWithRetry({
+        method: 'GET',
+        url: next,
         headers: {
           Authorization: `Bearer ${access}`,
           'Bb-Api-Subscription-Key': subscriptionKey
         }
       });
+      const page = JSON.parse(pageResp.body);
 
       // After page is received, log number of rows received
       const received = page.value.length;
@@ -365,6 +669,8 @@ app.get('/bulk/actions', async (req, res) => {
     }
     out.end();
     dest.on('close', () => {
+      // schedule cleanup
+      setTimeout(() => fs.unlink(tmpFile, () => {}), TTL_MS);
       res.json({ id: tmpId, rows: total });
     });
   } catch (err) {
@@ -385,20 +691,28 @@ app.get('/bulk/actions/chunk', (req, res) => {
   const end = start + Number(chunkSize);
   const rows = [];
 
-  fs.createReadStream(file)
-    .pipe(require('csv-parse')({ columns: true }))
-    .on('data', (row) => {
-      if (rows.length >= chunkSize) return;
-      const idx = rows.length + page * chunkSize;
-      if (idx >= start && idx < end) rows.push(row);
-    })
+  const parse = require('csv-parse');
+  let i = -1;
+  const parser = fs.createReadStream(file).pipe(parse({ columns: true}));
+  parser.on('data', (row) => {
+    i += 1;
+    if (i < start) return;
+    if (i >= end) { parser.destroy(); return; }
+    rows.push(row);
+  })
     .on('end', () => res.json({ value: rows, page: Number(page), chunkSize: Number(chunkSize) }));
+});
+
+app.delete('/bulk/actions/purge', (req, res) => {
+  const { id } = req.query;
+  const file = path.join(os.tmpdir(), `actions_${id}.csv`);
+  fs.unlink(file, (e) => res.status(e ? 404 : 204).end());
 });
 
 // Main API Retrieval Path
 app.get('/getBlackbaudData', async (req, res) => {
-  const uid = req.query.uid;
-  if (!haveValidTokens(uid)) {
+  const uid = uidFromReq(req);
+  if (!(await haveValidTokens(uid))) {
     return res.status(401).json({ error: "Not authenticated." });
   }
   // API URL parameters
@@ -455,7 +769,7 @@ app.get('/getBlackbaudData', async (req, res) => {
       if (recordId) {
         const singleUrl = `https://api.sky.blackbaud.com/constituent/v1/actions/${recordId}`;
         const singleData = await fetchSingleRecord(uid, singleUrl);
-        console.log("URL = ", singleUrl);
+        console.log("URL = ", safeLogUrl(singleUrl));
         return res.json({ value: [singleData] });
       } else {
         let url = `https://api.sky.blackbaud.com/constituent/v1/actions?`;
@@ -471,7 +785,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Actions URL:", url);
+        console.log(`[${req.id}] -> Initial Actions URL:`, safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -486,7 +800,7 @@ app.get('/getBlackbaudData', async (req, res) => {
         let url = `https://api.sky.blackbaud.com/constituent/v1/constituents?`;
         if (includeInactive) url += `include_inactive=true&`;
         url += `limit=${limit}&offset=${offset}`;
-        console.log("→ Initial Constituents URL:", url);
+        console.log("→ Initial Constituents URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -518,7 +832,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Events URL:", url);
+        console.log("→ Initial Events URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -541,8 +855,8 @@ app.get('/getBlackbaudData', async (req, res) => {
         if (campaignId) url += `campaign_id=${encodeURIComponent(campaignId)}&`;
         if (fundId) url += `fund_id=${encodeURIComponent(fundId)}&`;
         if (appealId) url += `appeal_id=${encodeURIComponent(appealId)}&`;
-        if (startGiftDate) url += `start_gift_date=${encodeURI(startGiftDate)}&`;
-        if (endGiftDate) url += `end_gift_date=${encodeURI(endGiftDate)}&`;
+        if (startGiftDate) url += `start_gift_date=${encodeURIComponent(startGiftDate)}&`;
+        if (endGiftDate) url += `end_gift_date=${encodeURIComponent(endGiftDate)}&`;
         if (startGiftAmount) url += `start_gift_amount=${encodeURIComponent(startGiftAmount)}&`;
         if (endGiftAmount) url += `end_gift_amount=${encodeURIComponent(endGiftAmount)}&`;
         if (listId) url += `list_id=${encodeURIComponent(listId)}&`;
@@ -554,7 +868,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Gifts URL:", url);
+        console.log("→ Initial Gifts URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -578,7 +892,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Funds URL:", url);
+        console.log("→ Initial Funds URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -601,7 +915,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Campaigns URL:", url);
+        console.log("→ Initial Campaigns URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -624,7 +938,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Appeals URL:", url);
+        console.log("→ Initial Appeals URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -652,7 +966,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           // offset mode: classic paging
           url += `limit=${limit}&offset=${offset}`;
         }
-        console.log("→ Initial Opportunities URL:", url);
+        console.log("→ Initial Opportunities URL:", safeLogUrl(url));
         const allRecords = await fetchMultipleRecords(uid, url, [], 0, maxPages);
         return res.json({ value: allRecords });
       }
@@ -675,7 +989,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           use_static_query_id_set: false
         };
 
-        const startJobResp = await requestPromise({
+        const startJobResp = await httpRequestWithRetry({
           method: 'POST',
           url: 'https://api.sky.blackbaud.com/query/queries/executebyid?product=RE&module=None',
           headers: {
@@ -692,7 +1006,7 @@ app.get('/getBlackbaudData', async (req, res) => {
         let jobStatus;
         do {
           await sleep(15000);
-          const pollResp = await requestPromise({
+          const pollResp = await httpRequestWithRetry({
             method: 'GET',
             url: `https://api.sky.blackbaud.com/query/jobs/${jobId}?product=RE&module=None&include_read_url=OnceCompleted&content_disposition=Attachment`,
             headers: {
