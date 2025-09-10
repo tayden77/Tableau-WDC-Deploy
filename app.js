@@ -6,7 +6,6 @@ require('dotenv').config();
 const cookieParser = require('cookie-parser');
 const http = require('http');
 const request = require('request');
-const rp = require('request-promise-native');
 const cors = require('cors');
 const fs = require('fs');
 const os = require('os');
@@ -34,10 +33,7 @@ const dataLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 100
-});
+
 const SINGLE_USER = process.env.SINGLE_USER === 'true';
 const GLOBAL_UID = 'single-user';
 
@@ -86,19 +82,26 @@ app.use(helmet({
       styleSrc: ["'self'", "https://cdn.jsdelivr.net"],
       imgSrc: ["'self'", "data:"],
       connectSrc: ["'self'", "https://oauth2.sky.blackbaud.com", "https://api.sky.blackbaud.com"],
-      frameAncestors: ["'self'"],
+      frameAncestors: ["'self'", "https://*.tableau.com"],
       baseUri: ["'none'"],
       objectSrc: ["'none'"],
       formAction: ["'self'", "https://oauth2.sky.blackbaud.com"]
     }
   },
   frameguard: { action: 'sameorigin' },
-  hsts: process.env.NODE_ENV === 'production' ? { maxAge: 15552000, includeSubDomains: true, preload: true } : false
+  hsts: process.env.NODE_ENV === 'production' ? { maxAge: 15552000, includeSubDomains: true, preload: true } : false,
+  referrerPolicy: { policy: 'no-referrer' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  crossOriginResourcePolicy: { policy: 'same-site'}
 }));
 
 
 app.use(cookieParser());
-app.use(express.static(__dirname + '/public'));
+app.use(express.static(path.join(__dirname + '/public'), {
+  maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
+  etag: true,
+  immutable: true
+}));
 const allowed = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 // Example: CORS_ORIGIN="http://localhost:8080,http://localhost:3333"
 app.use(cors({
@@ -373,6 +376,16 @@ async function fetchMultipleRecords(uid, url, allItems = [], pageCount = 0, maxP
 // Base Path
 app.get('/', (_, res) => res.redirect('/wdc.html'));
 
+// Health Check Path
+app.get('/healthz', async (req, res) => {
+  try {
+    await redis.ping();
+    res.json({ ok: true });  
+  } catch {
+    res.status(500).json({ ok: false });
+  }
+});
+
 // BlackBaud Authentication Path
 // app.get('/auth', function (req, res) {
 //   var oauthUrl = "https://oauth2.sky.blackbaud.com/authorization" +
@@ -385,7 +398,7 @@ app.get('/', (_, res) => res.redirect('/wdc.html'));
 // });
 
 // New Authentication Path
-app.use(['/auth', config.REDIRECT_PATH, '/getBlackbaudData'], limiter); // Rate limit auth and data retrieval paths
+app.use(['/auth', config.REDIRECT_PATH, '/getBlackbaudData'], authLimiter); // Rate limit auth and data retrieval paths
 app.use(
   ['/bulk/query/init','/bulk/query/chunk','/bulk/actions','/bulk/actions/chunk'],
   dataLimiter
@@ -664,6 +677,7 @@ app.get('/bulk/actions', async (req, res) => {
       console.log(`[/bulk/actions] page #${pageCount} -> ${received} rows (total so far ${total + received}), ${elapsed} mins elapsed`);
 
       page.value.forEach(row => out.write(row));
+
       total += received;
       next = page.next_link || null;
     }
