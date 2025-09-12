@@ -25,25 +25,11 @@ if (urlSid) {
   history.replaceState(null, '', `${location.pathname}${clean.toString() ? `?${clean}` : ''}`);
 }
 
-// Restore SID/JWT when we're inside Tableau (gatherDataPhase)
-if (HAS_TABLEAU) {
-  try {
-    // If Desktop already stored them, pull them back
-    if (!sid && tableau.username) {
-      sid = tableau.password;
-      sessionStorage.setItem('bb_jwt', tok);
-    }
-  } catch (e) {
-    // ignore if not available yet
-  }
-}
-
 // If still no sid, generate one
 if (!sid) {
   sid = (crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
   sessionStorage.setItem(SID_KEY, sid);
 }
-
 
 // Persist JWT across reloads and remove from URL bar
 (function bootstrapToken() {
@@ -1400,7 +1386,9 @@ if (!sid) {
                 if (!obj.value.length) return doneCallback();
                 table.appendRows(obj.value.map(mapActions));
                 if (obj.value.length === CHUNK) { page += 1; fetchChunk(); }
-                else { doneCallback(); }
+                else {
+                  authedFetch(`/bulk/actions/purge?id=${bulkId}`, { method: 'DELETE' }).finally(doneCallback);
+                }
               })
               .catch(err => tableau.abortWithError('Chunk fetch failed: ' + err));
           }
