@@ -3,7 +3,6 @@
 // -------------------------------------------------- //
 require('dotenv').config();
 
-const cookieParser = require('cookie-parser');
 const http = require('http');
 const request = require('request');
 const cors = require('cors');
@@ -36,6 +35,7 @@ const dataLimiter = rateLimit({
 
 const SINGLE_USER = process.env.SINGLE_USER === 'true';
 const GLOBAL_UID = 'single-user';
+const TMP_FILE_TTL_MS = parseInt(process.env.TMP_FILE_TTL_MS || '', 10) || (30 * 60 * 1000); // default 30 minutes
 
 const requestPromise = promisify(request);
 
@@ -43,7 +43,9 @@ const requestPromise = promisify(request);
 const config = {
   PORT: process.env.PORT || 3333,
   HOSTPATH: process.env.HOSTPATH || 'http://localhost',
-  REDIRECT_PATH: process.env.REDIRECT_PATH || '/redirect'
+  REDIRECT_PATH: process.env.REDIRECT_PATH || '/redirect',
+  HTTP_TIMEOUT_MS: parseInt(process.env.HTTP_TIMEOUT_MS || '30000', 10), 
+  HTTP_MAX_WAIT_MS: parseInt(process.env.HTTP_MAX_WAIT_MS || '120000', 10)
 };
 
 // ---- Secrets (read once and never re-declare) ----
@@ -88,15 +90,13 @@ app.use(helmet({
       formAction: ["'self'", "https://oauth2.sky.blackbaud.com"]
     }
   },
-  frameguard: { action: 'sameorigin' },
+  frameguard: false, // let CSP frame-ancestors handle it
   hsts: process.env.NODE_ENV === 'production' ? { maxAge: 15552000, includeSubDomains: true, preload: true } : false,
   referrerPolicy: { policy: 'no-referrer' },
   crossOriginOpenerPolicy: { policy: 'same-origin' },
   crossOriginResourcePolicy: { policy: 'same-site'}
 }));
 
-
-app.use(cookieParser());
 app.use(express.static(path.join(__dirname + '/public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
   etag: true,
@@ -133,14 +133,58 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Temp File Cleanup Function
+async function cleanupTempFiles() {
+  const dir = os.tmpdir();
+  const patterns = [/^query_[a-f0-9-]+\.csv$/i, /^actions_[a-f0-9-]+\.csv$/i];
+  try {
+    const now = Date.now();
+    const files = await fs.promises.readdir(dir);
+    await Promise.all(
+      files
+        .filter(fn => patterns.some(re => re.test(fn)))
+        .map(async fn => {
+          const full = path.join(dir, fn);
+          try {
+            const st = await fs.promises.stat(full);
+            if (now - st.mtimeMs > TMP_FILE_TTL_MS) {
+              await fs.promises.unlink(full);
+              console.log(`[startup] purged orphan tmp: ${fn}`);
+            }
+          } catch (e) {
+            console.warn(`[startup] tmp cleanup error (${fn});`, e.message);
+          }
+        })
+    );
+  } catch (e) {
+    console.warn('[startup] tmp cleanup skipped:', e.message);
+  }
+}
+
 // HTTP Request with Retry Logic
 async function httpRequestWithRetry(opts, {
   maxRetries = 5,
-  baseDelayMs = 500
+  baseDelayMs = 500,
+  requestTimeoutMs = config.HTTP_TIMEOUT_MS,
+  maxTotalWaitMs = config.HTTP_MAX_WAIT_MS
 } = {}) {
+  const start = Date.now();
   let attempt = 0;
   while (true) {
-    const resp = await requestPromise(opts);
+    let resp;
+    try {
+      // Enforce a default timeout unless caller set one explicitly
+      resp = await requestPromise({ timeout: opts.timeout ?? requestTimeoutMs, ...opts });
+    } catch (err) {
+      // Network/transport error: optionally retry
+      const retryableNet = ['ETIMEDOUT', 'ESOCKETTIMEDOUT','ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'EHOSTUNREACH', 'EPIPE'].includes(err.code);
+      if (!retryableNet || attempt >= maxRetries) throw err;
+      const backoff = baseDelayMs * Math.pow(2, attempt);
+      if ((Date.now() - start) + backoff > maxTotalWaitMs) throw err;
+      await sleep(backoff); 
+      attempt += 1; 
+      continue;
+    }
 
     // Success
     if (resp.statusCode < 400) return resp;
@@ -154,6 +198,7 @@ async function httpRequestWithRetry(opts, {
       ? retryAfter * 1000
       : baseDelayMs * Math.pow(2, attempt); // exponential backoff
 
+    if ((Date.now() - start) + backoff > maxTotalWaitMs) return resp;
     await sleep(backoff);
     attempt += 1;
   }
@@ -230,13 +275,19 @@ async function withRefreshLock(uid, fn) {
 
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
+const JWT_ISSUER = process.env.JWT_ISSUER || 'http://localhost:3333';
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'bb-wdc';
 if (!process.env.JWT_SECRET || JWT_SECRET === 'dev-only-change-me') {
   throw new Error('JWT_SECRET required (set a strong value in env)');
 }
 
 // Issue a JWT token for the user ID
 function issueJwt(uid) {
-  return jwt.sign({ uid, aud: 'bb-wdc', iss: 'your-app' }, JWT_SECRET, { expiresIn: '30m' });
+  return jwt.sign(
+    { uid, sub: uid },
+    JWT_SECRET,
+    { expiresIn: '30m', issuer: JWT_ISSUER, audience: JWT_AUDIENCE }
+  );
 }
 
 // Extract the user ID from the request, if present
@@ -246,7 +297,14 @@ function uidFromReq(req) {
   const bearer = h.startsWith('Bearer ') ? h.slice(7) : null;
   const tok = bearer || req.query.tok || null;
   if (tok) {
-    try { return jwt.verify(tok, JWT_SECRET).uid; } catch {
+    try { 
+      const payload = jwt.verify(tok, JWT_SECRET, { 
+        audience: JWT_AUDIENCE, 
+        issuer: JWT_ISSUER,
+        clockTolerance: 60 // allow 1 min clock skew
+      });
+      return payload.uid;
+    } catch {
       /* invalid */
     }
   }
@@ -315,45 +373,42 @@ async function fetchSingleRecord(uid, url) {
 }
 
 // Fetch multiple API records
-async function fetchMultipleRecords(uid, url, allItems = [], pageCount = 0, maxPages) {
-  // stop if we've hit user’s page cap
-  if (Number.isFinite(maxPages) && pageCount >= maxPages) {
-    return allItems;
-  }
+async function fetchMultipleRecords(uid, startUrl, allItems = [], pageCount = 0, maxPages) {
+  let url = startUrl;
+  let pages = pageCount;
+  const cap = Number.isFinite(maxPages) ? maxPages : Infinity;
 
-  // 3️⃣ Always refresh before each page
-  const access = await ensureValidToken(uid);
-
-  const resp = await httpRequestWithRetry({
-    method: 'GET',
-    url: url,
-    headers: {
-      'Authorization': `Bearer ${access}`,
-      'Bb-Api-Subscription-Key': subscriptionKey
+  while (url && pages < cap) {
+    const access = await ensureValidToken(uid);
+    const resp = await httpRequestWithRetry({
+      method: 'GET',
+      url, 
+      headers: { Authorization: `Bearer ${access}`, 'Bb-Api-Subscription-Key': subscriptionKey }
+    });
+    if (resp.statusCode !== 200) {
+      throw new Error(`Status: ${resp.statusCode} => ${resp.body}`);
     }
-  });
 
-  if (resp.statusCode !== 200) {
-    throw new Error(`Status: ${resp.statusCode} ⇒ ${resp.body}`);
-  }
+    const data = JSON.parse(resp.body);
+    if (pages === 0) console.log('first page rows', Array.isArray(data.value) ? data.value.length : 0);
+    if (Array.isArray(data.value) && data.value.length) {
+      allItems.push(...data.value);
+    }
 
-  const data = JSON.parse(resp.body);
-  if (pageCount === 0) console.log('first page rows', data.value.length);
-  if (Array.isArray(data.value) && data.value.length) {
-    allItems.push(...data.value);
+    if (data.next_link && data.next_link !== url && (data.value?.length || 0) > 0) {
+      //log continuation token if present
+      try {
+        const cont = new URL(data.next_link).searchParams.get('continuation_token');
+        if (cont) console.log(`-> page ${pages + 1} continuation_token: ${cont}`);
+      } catch {}
+      console.log(`fetched page ${pages + 1}`);
+      url = data.next_link;
+      pages += 1;
+      continue;
+    }
+    console.log(`fetched page ${pages + 1}`);
+    break;
   }
-
-  // log continuation token if present
-  if (data.next_link) {
-    const cont = new URL(data.next_link).searchParams.get('continuation_token');
-    if (cont) console.log(`→ page ${pageCount + 1} continuation_token: ${cont}`);
-  }
-  console.log(`fetched page ${pageCount + 1}`);
-  // recurse if we got rows and next_link differs
-  if (data.next_link && data.next_link !== url && data.value.length) {
-    return fetchMultipleRecords(uid, data.next_link, allItems, pageCount + 1, maxPages);
-  }
-
   return allItems;
 }
 
@@ -409,7 +464,7 @@ app.get('/auth', async (req, res) => {
   const codeVerifier  = b64url(crypto.randomBytes(32));
   const codeChallenge = b64url(sha256(codeVerifier));
 
-  await redis.hmset(`oauth:${sid}`, {
+  await redis.hset(`oauth:${sid}`, {
     code_verifier: codeVerifier,
     created_at: Date.now().toString()
   });
@@ -536,11 +591,11 @@ app.use('/getBlackbaudData', async (req, res, next) => {
   if (!uid || !(await haveValidTokens(uid))) {
     return res.status(401).json({ error: 'Not authenticated' });
   } 
-  console.log('[debug] query params:', req.query);
   const DEFAULT_LIMIT = 5000;
   const DEFAULT_OFFSET = 0;
 
-  const { endpoint, page, offset } = req.query;
+  let { endpoint, page, offset } = req.query;
+  console.log(`[${req.id}] ${endpoint} page=${page ?? 'n/a'} offset=${offset ?? 'n/a'}`);
   // Start logging while Tableau is Paging
   if (page !== undefined || offset !== undefined) {
     console.log(`[${new Date().toISOString()}] ${endpoint} page=${page ?? 'n/a'} offset=${offset ?? 'n/a'}`);
@@ -584,7 +639,7 @@ app.get('/bulk/query/init', async (req, res) => {
   const file = path.join(os.tmpdir(), `query_${tmpId}.csv`);
   fs.writeFileSync(file, buf);
 
-  setTimeout(() => fs.unlink(file, () => {}), 30 * 60 * 1000); // delete after 30 minutes
+  setTimeout(() => fs.unlink(file, () => {}), TMP_FILE_TTL_MS); // delete after 30 minutes
 
   const header = csvHeader(buf.toString('utf8'));
   const totalRows = parseCsv(buf.toString('utf8'), { columns: true, skip_empty_lines: true }).length; // or scan/count lines
@@ -645,7 +700,6 @@ app.get('/bulk/actions', async (req, res) => {
   let next = `https://api.sky.blackbaud.com/constituent/v1/actions?limit=${LIMIT}`;
   const tmpId = uuidv4();
   const tmpFile = path.join(os.tmpdir(), `actions_${tmpId}.csv`);
-  const TTL_MS = 30 * 60 * 1000; // 30 minutes
 
   // CSV stream with explicit columns ---------------------------------
   const out = stringify({ header: true, columns: ACTION_COLS });
@@ -684,7 +738,7 @@ app.get('/bulk/actions', async (req, res) => {
     out.end();
     dest.on('close', () => {
       // schedule cleanup
-      setTimeout(() => fs.unlink(tmpFile, () => {}), TTL_MS);
+      setTimeout(() => fs.unlink(tmpFile, () => {}), TMP_FILE_TTL_MS);
       res.json({ id: tmpId, rows: total });
     });
   } catch (err) {
@@ -1076,6 +1130,8 @@ app.get('/getBlackbaudData', async (req, res) => {
   }
 });
 
-http.createServer(app).listen(config.PORT, function () {
-  console.log('Express server listening on port ' + config.PORT);
+cleanupTempFiles().finally(() => {
+  http.createServer(app).listen(config.PORT, function () {
+    console.log('Express server listening on port ' + config.PORT);
+  });
 });
