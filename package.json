@@ -16,15 +16,22 @@
     "dotenv": "^16.6.1",
     "express": "~4.13.*",
     "express-rate-limit": "^6.11.2",
+    "express-session": "^1.18.2",
     "helmet": "^7.2.0",
     "ioredis": "^5.7.0",
     "jsonwebtoken": "^9.0.2",
-    "undici": "^5.28.4",
+    "moment": ">=2.19.3",
+    "morgan": "^1.10.1",
+    "pino": "^9.9.0",
+    "pino-pretty": "^13.1.1",
+    "redis": "^4.7.1",
+    "request": ">=2.68.0",
+    "request-promise-native": "^1.0.9",
     "uuid": "^11.1.0",
     "zod": "^3.25.76"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">= 0.10.0"
   },
   "files": [],
   "scripts": {

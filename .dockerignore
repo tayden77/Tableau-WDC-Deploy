@@ -1,13 +1,8 @@
 node_modules
 .git
 .env
-slides
-*.md
 *.log
 *.test.*
 .vscode
-package-lock.json
-README
-run-wdc.sh
 Dockerfile
 docker-compose.yml
