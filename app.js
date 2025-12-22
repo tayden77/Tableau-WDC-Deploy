@@ -4,14 +4,13 @@
 require('dotenv').config();
 
 const http = require('http');
-const request = require('request');
+const { request: undiciRequest } = require('undici'); // Requires: npm install undici@5.28.4
 const cors = require('cors');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const express = require('express');
 const app = express();
-const { promisify } = require('util');
 const { parse: parseCsv } = require('csv-parse/sync'); // Requires: npm i csv-parse
 const { v4: uuidv4 } = require('uuid'); // Requires: npm i uuid
 const { stringify } = require('csv-stringify'); // Requires: npm i csv-stringify
@@ -36,8 +35,6 @@ const dataLimiter = rateLimit({
 const SINGLE_USER = process.env.SINGLE_USER === 'true';
 const GLOBAL_UID = 'single-user';
 const TMP_FILE_TTL_MS = parseInt(process.env.TMP_FILE_TTL_MS || '', 10) || (30 * 60 * 1000); // default 30 minutes
-
-const requestPromise = promisify(request);
 
 // ---- Centralised runtime-config object ----
 const config = {
@@ -112,6 +109,11 @@ redis.on('connect', () => console.log('[redis] connected'));
 redis.on('error', (err) => console.error('[redis] error', err));
 app.disable('x-powered-by'); // Disable X-Powered-By header
 
+// Health endpoint for container monitoring
+app.get('/healthz', (req, rex) => {
+  res.status(200).send('ok');
+});
+
 const crypto = require('crypto');
 const b64url = b => b.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const sha256 = s => crypto.createHash('sha256').update(s).digest();
@@ -170,11 +172,12 @@ async function httpRequestWithRetry(opts, {
 } = {}) {
   const start = Date.now();
   let attempt = 0;
+  let lastErr;
   while (true) {
     let resp;
     try {
       // Enforce a default timeout unless caller set one explicitly
-      resp = await requestPromise({ timeout: opts.timeout ?? requestTimeoutMs, ...opts });
+      resp = await undiciRequestPromise({ timeout: opts.timeout ?? requestTimeoutMs, ...opts });
     } catch (err) {
       // Network/transport error: optionally retry
       const retryableNet = ['ETIMEDOUT', 'ESOCKETTIMEDOUT','ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'EHOSTUNREACH', 'EPIPE'].includes(err.code);
@@ -201,6 +204,30 @@ async function httpRequestWithRetry(opts, {
     if ((Date.now() - start) + backoff > maxTotalWaitMs) return resp;
     await sleep(backoff);
     attempt += 1;
+  }
+}
+
+// Undici request wrapped in a Promise
+async function undiciRequestPromise(opts) {
+  const { method = 'GET', url, headers = {}, body, form, timeout } = opts;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeout ?? config.HTTP_TIMEOUT_MS);
+
+  try {
+    const res = await undiciRequest(url, {
+      method,
+      headers,
+      body: form ? new URLSearchParams(form).toString() : body,
+      signal: controller.signal
+    });
+    const ab = await res.body.arrayBuffer();
+    return {
+      statusCode: res.statusCode,
+      headers: res.headers,
+      body: Buffer.from(ab)
+    };
+  } finally {
+    clearTimeout(t);
   }
 }
 
@@ -338,7 +365,7 @@ async function ensureValidToken(uid) {
       if (resp.statusCode !== 200) {
         throw new Error(`Failed to refresh token: ${resp.statusCode} ⇒ ${resp.body}`);
       }
-      const body = JSON.parse(resp.body);
+      const body = JSON.parse(resp.body.toString('utf8'));
       await setTokens(uid, {
         access:  body.access_token,
         refresh: body.refresh_token || tok.refresh,
@@ -369,7 +396,7 @@ async function fetchSingleRecord(uid, url) {
     throw new Error(`Status: ${resp.statusCode} ⇒ ${resp.body}`);
   }
 
-  return JSON.parse(resp.body);
+  return JSON.parse(resp.body.toString('utf8'));
 }
 
 // Fetch multiple API records
@@ -389,7 +416,7 @@ async function fetchMultipleRecords(uid, startUrl, allItems = [], pageCount = 0,
       throw new Error(`Status: ${resp.statusCode} => ${resp.body}`);
     }
 
-    const data = JSON.parse(resp.body);
+    const data = JSON.parse(resp.body.toString('utf8'));
     if (pages === 0) console.log('first page rows', Array.isArray(data.value) ? data.value.length : 0);
     if (Array.isArray(data.value) && data.value.length) {
       allItems.push(...data.value);
@@ -531,7 +558,7 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
       return res.status(502).send('OAuth exchange failed');
     }
 
-    const tok = JSON.parse(resp.body);
+    const tok = JSON.parse(resp.body.toString('utf8'));
 
     // Choose the uid we’ll store long-lived BB tokens under:
     const uid = SINGLE_USER ? GLOBAL_UID : state;
@@ -618,7 +645,7 @@ app.get('/bulk/query/init', async (req, res) => {
     headers: { Authorization: `Bearer ${access}`, 'Bb-Api-Subscription-Key': subscriptionKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(startBody)
   });
-  const jobId = JSON.parse(start.body).id;
+  const jobId = JSON.parse(start.body.toString('utf8')).id;
 
   // poll
   let status;
@@ -629,7 +656,7 @@ app.get('/bulk/query/init', async (req, res) => {
       url: `https://api.sky.blackbaud.com/query/jobs/${jobId}?product=RE&module=None&include_read_url=OnceCompleted&content_disposition=Attachment`,
       headers: { Authorization: `Bearer ${access}`, 'Bb-Api-Subscription-Key': subscriptionKey }
     });
-    status = JSON.parse(poll.body);
+    status = JSON.parse(poll.body.toString('utf8'));
     if (status.status === 'Failed') return res.status(500).send('Query job failed');
   } while (status.status !== 'Completed');
 
@@ -723,7 +750,7 @@ app.get('/bulk/actions', async (req, res) => {
           'Bb-Api-Subscription-Key': subscriptionKey
         }
       });
-      const page = JSON.parse(pageResp.body);
+      const page = JSON.parse(pageResp.body.toString('utf8'));
 
       // After page is received, log number of rows received
       const received = page.value.length;
@@ -1068,7 +1095,7 @@ app.get('/getBlackbaudData', async (req, res) => {
           body: JSON.stringify(startBody)
         });
 
-        const jobId = JSON.parse(startJobResp.body).id;
+        const jobId = JSON.parse(startJobResp.body.toString('utf8')).id;
 
         // Poll until the job is complete
         let jobStatus;
@@ -1082,16 +1109,15 @@ app.get('/getBlackbaudData', async (req, res) => {
               'Bb-Api-Subscription-Key': subscriptionKey
             }
           });
-          jobStatus = JSON.parse(pollResp.body);
+          jobStatus = JSON.parse(pollResp.body.toString('utf8'));
           if (jobStatus.status === 'Failed')
             return res.status(500).send(`Query job failed: ${pollResp.body}`);
         } while (jobStatus.status !== 'Completed');
 
         // Download the CSV once
-        const csvResp = await requestPromise({
+        const csvResp = await undiciRequestPromise({
           method: 'GET',
           url: jobStatus.sas_uri,
-          encoding: null
         });
         const csvText = csvResp.body.toString('utf8');
 
