@@ -6,7 +6,6 @@ slides
 *.log
 *.test.*
 .vscode
-package-lock.json
 README
 run-wdc.sh
 Dockerfile
