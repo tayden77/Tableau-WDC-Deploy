@@ -5,6 +5,7 @@ yarn-error.log*
 package-lock.json      # keep root lockfile, see below
 !package-lock.json     # negate the ignore for the root file
 **/package-lock.json   # ignore any nested lockfiles (e.g. csv-parse/package-lock.json)
+*.log
 
 # === dotenv / secrets ===
 .env
