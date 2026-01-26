@@ -1,21 +1,21 @@
 version: "3.9"
 
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   wdc:
-    image: ghcr.io/tayden77/renxt-wdc:latest
+    build: .
+    image: renxt-wdc:latest
     ports:
       - "3333:3333"
     env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
     restart: unless-stopped
 
-  watchtower:
-    image: containrrr/watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./watchtower-creds.json:/config/creds.json:ro
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_SCHEDULE=0 3 * * * 
-      - WATCHTOWER_LABEL_ENABLE=true
-      - REGISTRY_AUTH_FILE=/config/creds.json
-    restart: unless-stopped

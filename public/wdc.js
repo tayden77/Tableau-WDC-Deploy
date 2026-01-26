@@ -699,7 +699,7 @@ if (!sid) {
     $("#connectLink").on('click', (e) => {
       const authUrl = `/auth?sid=${encodeURIComponent(sid)}`;
       // use absolute HTTP to avoid any accidental HTTPS rewrite showing up in dev
-      const abs = `http://${location.host}${authUrl}`;
+      const abs = `http://${location.origin}${authUrl}`;
       e.preventDefault();
       window.location.assign(abs);
     });

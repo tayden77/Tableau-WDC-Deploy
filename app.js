@@ -45,11 +45,15 @@ const config = {
   HTTP_MAX_WAIT_MS: parseInt(process.env.HTTP_MAX_WAIT_MS || '120000', 10)
 };
 
+// Public URL of this service as seen by end users (behind OIT proxy/TLS) Update once OIT issues a domain
+// Example: https://wdc.foundation.alaska.edu
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+
 // ---- Secrets (read once and never re-declare) ----
 const clientID = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const subscriptionKey = process.env.SUBSCRIPTION_KEY;
-const redirectURI = process.env.REDIRECT_URI || `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`;
+const redirectURI = process.env.REDIRECT_URI || (PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${config.REDIRECT_PATH}` : `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`);
 
 // -------------------------
 // Express App
@@ -60,7 +64,7 @@ if (process.env.FORCE_HTTPS === 'true') {
   app.use((req, res, next) => {
     const host = req.headers.host || '';
     const isLocal = host.startsWith('localhost') || host.startsWith('127.0.0.1');
-    if (isLocal || req.secure || req.headers['x-forwarded-proto'] === 'https') return next();
+    if (isLocal || req.secure) return next();
     res.redirect(301, `https://${host}${req.originalUrl}`);
   });
 }
@@ -72,47 +76,61 @@ app.use((req, res, next) => {
   next();
 });
 
+// CSP and Security Headers: May change after OIT provisions TLS/domain
 app.use(helmet({
-  contentSecurityPolicy: {
-    useDefaults: true,
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "https://ajax.googleapis.com", "https://cdn.jsdelivr.net", "https://connectors.tableau.com", "https://cdnjs.cloudflare.com"],
-      styleSrc: ["'self'", "https://cdn.jsdelivr.net"],
-      imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'", "https://oauth2.sky.blackbaud.com", "https://api.sky.blackbaud.com"],
-      frameAncestors: ["'self'", "https://*.tableau.com"],
-      baseUri: ["'none'"],
-      objectSrc: ["'none'"],
-      formAction: ["'self'", "https://oauth2.sky.blackbaud.com"]
-    }
-  },
+  // Start permissive for Tableau WDC compatibility; tighten after confirming Desktop + external browser flow
+  contentSecurityPolicy: false,
+  // {
+  //   useDefaults: true,
+  //   directives: {
+  //     defaultSrc: ["'self'"],
+  //     scriptSrc: ["'self'", "https://ajax.googleapis.com", "https://cdn.jsdelivr.net", "https://connectors.tableau.com", "https://cdnjs.cloudflare.com"],
+  //     styleSrc: ["'self'", "https://cdn.jsdelivr.net"],
+  //     imgSrc: ["'self'", "data:"],
+  //     connectSrc: ["'self'", "https://oauth2.sky.blackbaud.com", "https://api.sky.blackbaud.com"],
+  //     frameAncestors: ["'self'", "https://*.tableau.com"],
+  //     baseUri: ["'none'"],
+  //     objectSrc: ["'none'"],
+  //     formAction: ["'self'", "https://oauth2.sky.blackbaud.com"]
+  //   }
+  // },
   frameguard: false, // let CSP frame-ancestors handle it
   hsts: process.env.NODE_ENV === 'production' ? { maxAge: 15552000, includeSubDomains: true, preload: true } : false,
-  referrerPolicy: { policy: 'no-referrer' },
-  crossOriginOpenerPolicy: { policy: 'same-origin' },
-  crossOriginResourcePolicy: { policy: 'same-site'}
+  referrerPolicy: { policy: 'no-referrer' }
+  // ,
+  // crossOriginOpenerPolicy: { policy: 'same-origin' },
+  // crossOriginResourcePolicy: { policy: 'same-site'}
 }));
 
-app.use(express.static(path.join(__dirname + '/public'), {
-  maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
-  etag: true,
-  immutable: true
+app.use(express.static(path.join(__dirname + 'public'), {
+  maxAge: process.env.NODE_ENV === 'production' ? '5m' : 0,
+  etag: true
 }));
 const allowed = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+
 // Example: CORS_ORIGIN="http://localhost:8080,http://localhost:3333"
 app.use(cors({
-  origin: allowed.length ? allowed : [/^http:\/\/localhost:\d+$/],
+  origin: (origin, cb) => {
+    // allow no-origin (curl, health checks)
+    if (!origin) return cb(null, true);
+
+    // always allow same-origin requests
+    if (PUBLIC_BASE_URL && origin === PUBLIC_BASE_URL) return cb(null, true);
+
+    // allow configured origins
+    if (allowed.includes(origin)) return cb(null, true);
+
+    // allow localhost during dev
+    if (/^http:\/\/localhost:\d+$/.test(origin)) return cb(null, true);
+
+    return cb(new Error('CORS blocked'), false);
+  },
   credentials: false
 }));
+
 redis.on('connect', () => console.log('[redis] connected'));
 redis.on('error', (err) => console.error('[redis] error', err));
 app.disable('x-powered-by'); // Disable X-Powered-By header
-
-// Health endpoint for container monitoring
-app.get('/healthz', (req, rex) => {
-  res.status(200).send('ok');
-});
 
 const crypto = require('crypto');
 const b64url = b => b.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -302,7 +320,7 @@ async function withRefreshLock(uid, fn) {
 
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
-const JWT_ISSUER = process.env.JWT_ISSUER || 'http://localhost:3333';
+const JWT_ISSUER = process.env.JWT_ISSUER || (PUBLIC_BASE_URL || 'http://localhost:3333');
 const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'bb-wdc';
 if (!process.env.JWT_SECRET || JWT_SECRET === 'dev-only-change-me') {
   throw new Error('JWT_SECRET required (set a strong value in env)');
@@ -468,6 +486,19 @@ app.get('/healthz', async (req, res) => {
   }
 });
 
+// Load Balancer Readiness Path
+app.get('/readyz', async (_req, res) => {
+  try {
+    await redis.ping();
+    if (!clientID || !clientSecret || !subscriptionKey) {
+      return res.status(503).json({ ok: false, reason: 'missing env' });
+    }
+    res.status(200).json({ ok: true});
+  } catch (e) {
+    res.status(503).json({ ok: false, reason: 'redis' });
+  }
+});
+
 // BlackBaud Authentication Path
 // app.get('/auth', function (req, res) {
 //   var oauthUrl = "https://oauth2.sky.blackbaud.com/authorization" +
@@ -508,6 +539,7 @@ app.get('/auth', async (req, res) => {
     `&state=${encodeURIComponent(sid)}` +
     `&code_challenge=${codeChallenge}&code_challenge_method=S256`;
 
+  console.log('[auth] redirect_uri', { redirectURI});
   res.redirect(oauthUrl);
 });
 
@@ -535,6 +567,8 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
   console.log('[redirect] exchanging code', { state, ttl });
 
   try {
+    console.log('[redirect] using redirect_uri', { redirectURI });
+
     const resp = await httpRequestWithRetry({
       method: 'POST',
       url: 'https://oauth2.sky.blackbaud.com/token',
@@ -1157,7 +1191,7 @@ app.get('/getBlackbaudData', async (req, res) => {
 });
 
 cleanupTempFiles().finally(() => {
-  http.createServer(app).listen(config.PORT, function () {
+  http.createServer(app).listen(config.PORT, '0.0.0.0', () => {
     console.log('Express server listening on port ' + config.PORT);
   });
 });
