@@ -18,22 +18,39 @@
 
   <!-- Tableau WDC library -->
   <script src="/vendor/tableauwdc-2.2.0.js"></script>
-  <!-- Cookie helper -->
+
+  <!-- Cookie helper (optional; keep if you still use it elsewhere) -->
   <script src="/vendor/js.cookie-2.0.2.min.js"></script>
+
   <!-- Your WDC code -->
   <script src="/wdc.js"></script>
-  <style>.signedin { display: none; } #mainSection { display: none; }</style>
+
+  <style>
+    .signedin { display: none; }
+    #mainSection { display: none; }
+  </style>
 </head>
 
 <body>
   <!-- ===== AUTH SECTION (always visible until signed in) ===== -->
   <div id="authSection" class="text-center my-5">
-    <p class="signedin mb-2">You are signed in! Open in Tableau Desktop.</p>
+    <p class="signedin mb-3">You are signed in! You can now open this connector in Tableau Desktop.</p>
+
     <p class="notsignedin mb-3">
-      You are not signed in, please open a browser outside of Tableau and click below to sign in to your Blackbaud
-      account. Once you've authenticated, remember to open in Tableau Desktop!
+      You are not signed in. If Tableau’s embedded browser won’t complete login,
+      open a regular browser window and click Connect below.
+      After authenticating, come back here and click “Open in Tableau Desktop”.
     </p>
-    <a id="connectLink" class="btn btn-primary" href="/auth">Connect to Blackbaud</a>
+
+    <div class="d-flex justify-content-center gap-2 flex-wrap">
+      <!-- Keep this ID because wdc.js currently toggles & binds click handler to #connectLink -->
+      <a id="connectLink" class="btn btn-primary" href="/auth">Connect to Blackbaud</a>
+
+      <!-- wdc.js will populate this href when present -->
+      <a id="openInDesktop" class="btn btn-success signedin" href="/wdc.html">
+        Open in Tableau Desktop
+      </a>
+    </div>
   </div>
 
   <!-- ===== MAIN SECTION ===== -->
@@ -104,14 +121,22 @@
                     <label for="offsetInput" class="form-label">Offset (Optional)</label>
                     <input type="number" id="offsetInput" class="form-control" placeholder="Default 0" />
                   </div>
+
+                  <!-- NEW: chunk size used by bulk/chunk endpoints in wdc.js -->
+                  <div class="mb-2">
+                    <label for="chunkSizeInput" class="form-label">Chunk Size (Bulk mode)</label>
+                    <input type="number" id="chunkSizeInput" class="form-control" placeholder="Default 15000" />
+                  </div>
+
                   <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="fetchAllRecords" />
                     <label class="form-check-label" for="fetchAllRecords">
                       Fetch all records (ignore limit/offset)
                     </label>
                   </div>
-                  <label for="note" class="form-label">Note: 2 pages of 500 records per page would be a limit of 1000
-                    records</label>
+                  <label for="note" class="form-label">
+                    Note: 2 pages of 500 records per page would be a limit of 1000 records
+                  </label>
                 </div>
               </div>
             </div>
@@ -138,9 +163,9 @@
         <!-- Column 3: Filters -->
         <div class="col-md-4 mb-3">
           <h5>Filters</h5>
+
           <!-- Constituents Endpoint Filters -->
           <div class="filter-group" data-endpoint="constituents" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveConstituents" />
               <label class="form-check-label" for="includeInactiveConstituents">
@@ -151,7 +176,6 @@
 
           <!-- Actions Endpoint Filters -->
           <div class="filter-group" data-endpoint="actions" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
             <div class="mb-2">
               <label for="dateAddedInput" class="form-label">Date Added</label>
               <input type="text" id="dateAddedInput" class="form-control" placeholder="YYYY-MM-DD" />
@@ -172,21 +196,6 @@
 
           <!-- Gifts Endpoint Filters -->
           <div class="filter-group" data-endpoint="gifts" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
-            <!--
-            <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" placeholder="YYYY-MM-DD" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" placeholder="YYYY-MM-DD" />
-            </div>
-            <div class="mb-2">
-              <label for="sortTokenInput" class="form-label">Sort Token</label>
-              <input type="text" id="sortTokenInput" class="form-control" placeholder="Hard to find?" />
-            </div>
-            -->
             <div class="mb-2">
               <label for="constituentIdInput" class="form-label">Constituent ID</label>
               <input type="text" id="constituentIdInput" class="form-control" placeholder="E.G. 395973" />
@@ -247,29 +256,6 @@
 
           <!-- Funds Endpoint Filters -->
           <div class="filter-group" data-endpoint="funds" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
-            <!--
-            <div class="mb-2"> (Array input not supported)
-              <label for="fundIdInput" class="form-label">Fund ID</label>
-              <input type="text" id="fundIdInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="sortTokenInput" class="form-label">Sort Token</label>
-              <input type="text" id="sortTokenInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="fundIdInput" class="form-label">Fund ID</label>
-              <input type="text" id="fundIdInput" class="form-control" />
-            </div>
-            -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveFunds" />
               <label class="form-check-label" for="includeInactiveFunds">
@@ -280,21 +266,6 @@
 
           <!-- Campaigns Endpoint Filters -->
           <div class="filter-group" data-endpoint="campaigns" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
-            <!--
-             <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="sortTokenInput" class="form-label">Sort Token</label>
-              <input type="text" id="sortTokenInput" class="form-control" />
-            </div>
-            -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveCampaigns" />
               <label class="form-check-label" for="includeInactiveCampaigns">
@@ -305,21 +276,6 @@
 
           <!-- Appeals Endpoint Filters -->
           <div class="filter-group" data-endpoint="appeals" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
-             <!--
-            <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="sortTokenInput" class="form-label">Sort Token</label>
-              <input type="text" id="sortTokenInput" class="form-control" />
-            </div>
-             -->
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="includeInactiveAppeals" />
               <label class="form-check-label" for="includeInactiveAppeals">
@@ -330,25 +286,6 @@
 
           <!-- Opportunity Endpoint Filters -->
           <div class="filter-group" data-endpoint="opportunities" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
-            <!--
-            <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="sortTokenInput" class="form-label">Sort Token</label>
-              <input type="text" id="sortTokenInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="constituentIdInput" class="form-label">Constituent ID</label>
-              <input type="text" id="constituentIdInput" class="form-control" />
-            </div>
-            -->
             <div class="mb-2">
               <label for="searchTextInput" class="form-label">Search Text</label>
               <input type="text" id="searchTextInput" class="form-control" />
@@ -367,25 +304,6 @@
 
           <!-- Events Endpoint Filters -->
           <div class="filter-group" data-endpoint="events" style="display:none">
-            <!-- COPY PASTE AVAILABLE FILTERS -->
-            <!--
-            <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="fieldsInput" class="form-label">Fields</label>
-              <input type="text" id="fieldsInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="sortInput" class="form-label">Sort</label>
-              <input type="text" id="sortInput" class="form-control" />
-            </div>
-            -->
             <div class="mb-2">
               <label for="nameInput" class="form-label">Name</label>
               <input type="text" id="nameInput" class="form-control" />
@@ -421,6 +339,7 @@
               </label>
             </div>
           </div>
+
         </div>
       </div>
 
@@ -435,4 +354,5 @@
     </div>
   </div>
 </body>
+
 </html>
