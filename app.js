@@ -1,26 +1,105 @@
-// -------------------------------------------------- //
-// Module Dependencies & Variables
-// -------------------------------------------------- //
+/**
+ * Tableau WDC (Raiser's Edge NXT / Blackbaud SKY API)
+ * ---------------------------------------------------
+ * Responsibilities:
+ *  - Serve the WDC UI + assets
+ *  - Handle OAuth2 (PKCE) sign-in with Blackbaud
+ *  - Cache long-lived BB tokens in Redis (per-user or single-user mode)
+ *  - Mint short-lived JWTs for Tableau Desktop requests
+ *  - Proxy/aggregate SKY API requests to Tableau in a WDC-friendly shape
+ *
+ * Deployment assumptions:
+ *  - Runs behind a reverse proxy / load balancer in production
+ *  - Public URL is stable (DNS), TLS terminated upstream
+ */
+
+'use strict';
+
+// --------------------------------------------------
+// 1) Imports (Node built-ins → external deps)
+// --------------------------------------------------
 require('dotenv').config();
 
 const http = require('http');
-const { request: undiciRequest } = require('undici'); // Requires: npm install undici@5.28.4
-const cors = require('cors');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
 const express = require('express');
-const app = express();
-const { parse: parseCsv } = require('csv-parse/sync'); // Requires: npm i csv-parse
-const { v4: uuidv4 } = require('uuid'); // Requires: npm i uuid
-const { stringify } = require('csv-stringify'); // Requires: npm i csv-stringify
-const Redis = require('ioredis'); // Requires: npm i ioredis
-const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379'); // Connect to Redis
+const cors = require('cors');
 const helmet = require('helmet'); // Requires: npm i helmet
 const rateLimit = require('express-rate-limit'); // Requires: npm i express-rate-limit
+const jwt = require('jsonwebtoken');
+const Redis = require('ioredis'); // Requires: npm i ioredis
+
+const { request: undiciRequest } = require('undici'); // Requires: npm install undici@5.28.4
+const { parse: parseCsv } = require('csv-parse/sync'); // Requires: npm i csv-parse
+const { stringify } = require('csv-stringify'); // Requires: npm i csv-stringify
+const { v4: uuidv4 } = require('uuid'); // Requires: npm i uuid
+
+// --------------------------------------------------
+// 2) Env + config (fail fast)
+// --------------------------------------------------
+// function requireEnv(name) {}
+
+// ---- Centralised runtime-config object ----
+
+// Public URL of this service as seen by end users (behind OIT proxy/TLS) Update once OIT issues a domain
+// Example: https://wdc.foundation.alaska.edu
+// NOTE: must be declared before JWT_ISSUER default, since JWT_ISSUER uses it
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+
+// App runtime
+const config = {
+  PORT: process.env.PORT || 3333,
+  HOSTPATH: process.env.HOSTPATH || 'http://localhost',
+  REDIRECT_PATH: process.env.REDIRECT_PATH || '/redirect',
+  HTTP_TIMEOUT_MS: parseInt(process.env.HTTP_TIMEOUT_MS || '30000', 10), 
+  HTTP_MAX_WAIT_MS: parseInt(process.env.HTTP_MAX_WAIT_MS || '120000', 10)
+};
+
+const redirectURI = 
+  process.env.REDIRECT_URI || 
+  (config.PUBLIC_BASE_URL 
+    ? `${config.PUBLIC_BASE_URL}${config.REDIRECT_PATH}` 
+    : `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`);
+
+// Blackbaud OAuth + API
+const clientID = process.env.CLIENT_ID;
+const clientSecret = process.env.CLIENT_SECRET;
+const subscriptionKey = process.env.SUBSCRIPTION_KEY;
+
+// JWT
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
+const JWT_ISSUER = process.env.JWT_ISSUER || (PUBLIC_BASE_URL || 'http://localhost:3333');
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'bb-wdc';
+
+// App feature flags / behavior toggles
+const SINGLE_USER = process.env.SINGLE_USER === 'true';
+const GLOBAL_UID = 'single-user';
+const TMP_FILE_TTL_MS = parseInt(process.env.TMP_FILE_TTL_MS || '', 10) || (30 * 60 * 1000); // default 30 minutes
+
+// ---- Secrets (read once and never re-declare) ----
+if (!process.env.JWT_SECRET || JWT_SECRET === 'dev-only-change-me') {
+  throw new Error('JWT_SECRET required (set a strong value in env)');
+}
+
+// --------------------------------------------------
+// 3) Clients (Redis)
+// --------------------------------------------------
+const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379'); // Connect to Redis
+redis.on('connect', () => console.log('[redis] connected'));
+redis.on('error', (err) => console.error('[redis] error', err));
+
+// --------------------------------------------------
+// 4) Express setup + global middleware
+// --------------------------------------------------
+const app = express();
+
 // ---- Rate limiters ----
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,      // 15 minutes
+  windowMs: 15 * 60 * 1000,       // 15 minutes
   max: 60,                        // 60 requests per 15 min per IP
   standardHeaders: true,
   legacyHeaders: false
@@ -31,29 +110,6 @@ const dataLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 });
-
-const SINGLE_USER = process.env.SINGLE_USER === 'true';
-const GLOBAL_UID = 'single-user';
-const TMP_FILE_TTL_MS = parseInt(process.env.TMP_FILE_TTL_MS || '', 10) || (30 * 60 * 1000); // default 30 minutes
-
-// ---- Centralised runtime-config object ----
-const config = {
-  PORT: process.env.PORT || 3333,
-  HOSTPATH: process.env.HOSTPATH || 'http://localhost',
-  REDIRECT_PATH: process.env.REDIRECT_PATH || '/redirect',
-  HTTP_TIMEOUT_MS: parseInt(process.env.HTTP_TIMEOUT_MS || '30000', 10), 
-  HTTP_MAX_WAIT_MS: parseInt(process.env.HTTP_MAX_WAIT_MS || '120000', 10)
-};
-
-// Public URL of this service as seen by end users (behind OIT proxy/TLS) Update once OIT issues a domain
-// Example: https://wdc.foundation.alaska.edu
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-
-// ---- Secrets (read once and never re-declare) ----
-const clientID = process.env.CLIENT_ID;
-const clientSecret = process.env.CLIENT_SECRET;
-const subscriptionKey = process.env.SUBSCRIPTION_KEY;
-const redirectURI = process.env.REDIRECT_URI || (PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${config.REDIRECT_PATH}` : `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`);
 
 // -------------------------
 // Express App
@@ -69,7 +125,7 @@ if (process.env.FORCE_HTTPS === 'true') {
   });
 }
 
-
+// Attach a request id for cross-system correlation (Tableau -> proxy -> WDC -> SKY API)
 app.use((req, res, next) => {
   req.id = uuidv4();
   res.setHeader('X-Request-Id', req.id);
@@ -102,10 +158,13 @@ app.use(helmet({
   // crossOriginResourcePolicy: { policy: 'same-site'}
 }));
 
+// Static WDC UI + assets
 app.use(express.static(path.join(__dirname + 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '5m' : 0,
   etag: true
 }));
+
+// CORS configuration
 const allowed = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 
 // Example: CORS_ORIGIN="http://localhost:8080,http://localhost:3333"
@@ -128,17 +187,16 @@ app.use(cors({
   credentials: false
 }));
 
-redis.on('connect', () => console.log('[redis] connected'));
-redis.on('error', (err) => console.error('[redis] error', err));
 app.disable('x-powered-by'); // Disable X-Powered-By header
 
-const crypto = require('crypto');
+// PKCE helpers (base64url + SHA-256)
 const b64url = b => b.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const sha256 = s => crypto.createHash('sha256').update(s).digest();
 
 // -------------------------------------------------- //
 // Helper Functions
 // -------------------------------------------------- //
+
 // Truncate console logging (Testing)
 function logTruncated(msg, maxLength = 1000) {
   if (msg.length > maxLength) {
@@ -180,6 +238,30 @@ async function cleanupTempFiles() {
     console.warn('[startup] tmp cleanup skipped:', e.message);
   }
 }
+
+// Undici request wrapped in a Promise
+async function undiciRequestPromise(opts) {
+  const { method = 'GET', url, headers = {}, body, form, timeout } = opts;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeout ?? config.HTTP_TIMEOUT_MS);
+
+  try {
+    const res = await undiciRequest(url, {
+      method,
+      headers,
+      body: form ? new URLSearchParams(form).toString() : body,
+      signal: controller.signal
+    });
+    const ab = await res.body.arrayBuffer();
+    return {
+      statusCode: res.statusCode,
+      headers: res.headers,
+      body: Buffer.from(ab)
+    };
+  } finally {
+    clearTimeout(t);
+  }
+} 
 
 // HTTP Request with Retry Logic
 async function httpRequestWithRetry(opts, {
@@ -225,30 +307,6 @@ async function httpRequestWithRetry(opts, {
   }
 }
 
-// Undici request wrapped in a Promise
-async function undiciRequestPromise(opts) {
-  const { method = 'GET', url, headers = {}, body, form, timeout } = opts;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeout ?? config.HTTP_TIMEOUT_MS);
-
-  try {
-    const res = await undiciRequest(url, {
-      method,
-      headers,
-      body: form ? new URLSearchParams(form).toString() : body,
-      signal: controller.signal
-    });
-    const ab = await res.body.arrayBuffer();
-    return {
-      statusCode: res.statusCode,
-      headers: res.headers,
-      body: Buffer.from(ab)
-    };
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 // Extract the header row from the CSV results
 function csvHeader(csvText) {
   const { parse } = require('csv-parse/sync');
@@ -271,6 +329,10 @@ function safeLogUrl(u) {
     return url.toString();
   } catch { return u; }
 }
+
+// -------------------------------------------------- //
+// Redis-backed token storage (per-user or single-user)
+// -------------------------------------------------- //
 
 // Store the access and refresh tokens in Redis cache
 async function setTokens(uid, tok) {
@@ -298,6 +360,7 @@ async function haveValidTokens(uid) {
   return !!(t && t.exp > Date.now());
 }
 
+// Avoid multiple simultaneous refreshes for the same user
 async function withRefreshLock(uid, fn) {
   const lockKey = `session:${uid}:refresh_lock`;
   const gotLock = await redis.set(lockKey, '1', 'NX', 'PX', 30000); // 30s
@@ -317,14 +380,9 @@ async function withRefreshLock(uid, fn) {
   }
 }
 
-
-const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
-const JWT_ISSUER = process.env.JWT_ISSUER || (PUBLIC_BASE_URL || 'http://localhost:3333');
-const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'bb-wdc';
-if (!process.env.JWT_SECRET || JWT_SECRET === 'dev-only-change-me') {
-  throw new Error('JWT_SECRET required (set a strong value in env)');
-}
+// -------------------------------------------------- //
+// JWT + Auth helpers
+// -------------------------------------------------- //
 
 // Issue a JWT token for the user ID
 function issueJwt(uid) {
@@ -396,9 +454,13 @@ async function ensureValidToken(uid) {
   return tok.access;
 }
 
+// -------------------------------------------------- //
+// SKY API fetch helpers (single + multi-page)
+// -------------------------------------------------- //
+
 // Fetch a single API record 
 async function fetchSingleRecord(uid, url) {
-  // 3️⃣ Ensure we have a fresh access token
+  // Ensure we have a fresh access token
   const access = await ensureValidToken(uid);
 
   const resp = await httpRequestWithRetry({
@@ -499,7 +561,7 @@ app.get('/readyz', async (_req, res) => {
   }
 });
 
-// BlackBaud Authentication Path
+// Old BlackBaud Authentication Path
 // app.get('/auth', function (req, res) {
 //   var oauthUrl = "https://oauth2.sky.blackbaud.com/authorization" +
 //     "?response_type=code" +
@@ -511,6 +573,7 @@ app.get('/readyz', async (_req, res) => {
 // });
 
 // New Authentication Path
+// NOTE: apply limiters before defining the routes
 app.use(['/auth', config.REDIRECT_PATH, '/getBlackbaudData'], authLimiter); // Rate limit auth and data retrieval paths
 app.use(
   ['/bulk/query/init','/bulk/query/chunk','/bulk/actions','/bulk/actions/chunk'],
@@ -594,7 +657,7 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
 
     const tok = JSON.parse(resp.body.toString('utf8'));
 
-    // Choose the uid we’ll store long-lived BB tokens under:
+    // Choose the uid to store long-lived BB tokens under:
     const uid = SINGLE_USER ? GLOBAL_UID : state;
 
     await setTokens(uid, {
@@ -615,7 +678,6 @@ app.get(config.REDIRECT_PATH, async (req, res) => {
     return res.status(500).send('OAuth exchange error');
   }
 });
-
 
 // Authentication Status
 app.get('/status', async (req, res) => {
@@ -643,7 +705,6 @@ app.get('/status', async (req, res) => {
 
   return res.json({ authenticated: false });
 });
-
 
 // API Retrieval Path (Page logging for validation)
 app.use('/getBlackbaudData', async (req, res, next) => {
@@ -838,12 +899,15 @@ app.delete('/bulk/actions/purge', (req, res) => {
   fs.unlink(file, (e) => res.status(e ? 404 : 204).end());
 });
 
-// Main API Retrieval Path
+// ----------------------------------------------------------- //
+// Main API Retrieval Path: All available endpoints
+// ----------------------------------------------------------- //
 app.get('/getBlackbaudData', async (req, res) => {
   const uid = uidFromReq(req);
   if (!(await haveValidTokens(uid))) {
     return res.status(401).json({ error: "Not authenticated." });
   }
+
   // API URL parameters
   const DEFAULT_LIMIT = 5000;
   const DEFAULT_OFFSET = 0;
@@ -857,6 +921,8 @@ app.get('/getBlackbaudData', async (req, res) => {
   const maxPages = (req.query.max_pages ?? req.query.maxPages) !== undefined
     ? parseInt(req.query.max_pages ?? req.query.maxPages, 10)
     : Infinity;
+
+  // Common filters / params (many are endpoint-specific; left centralized for compatibility)
   const name = req.query.name || null;
   const lookupId = req.query.lookup_id || req.query.lookupId || null;
   const recordId = req.query.id; // Endpoint specific ID for single record retrieval
@@ -1189,6 +1255,10 @@ app.get('/getBlackbaudData', async (req, res) => {
     return res.status(500).send(err.message);
   }
 });
+
+// --------------------------------------------------
+// Startup
+// --------------------------------------------------
 
 cleanupTempFiles().finally(() => {
   http.createServer(app).listen(config.PORT, '0.0.0.0', () => {

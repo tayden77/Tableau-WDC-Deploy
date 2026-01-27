@@ -1,8 +1,29 @@
 /***********************************************
- *  --------- Global Section ---------
+ * Tableau WDC Client (wdc.js)
+ * ------------------------------------------------
+ * Runs in both:
+ *  - Browser (interactive UI in wdc.html)
+ *  - Tableau Desktop Web Data Connector sandbox
+ *
+ * Key concepts:
+ *  - sid (session id): stable identifier pairing Desktop <-> external browser OAuth flow
+ *  - tok (JWT): short-lived server-minted token used for authenticated API calls to app.js
+ *
+ * Storage:
+ *  - sessionStorage.bb_sid  = sid
+ *  - sessionStorage.bb_jwt  = tok
+ ***********************************************/
+
+
+/***********************************************
+ *  --------- Global Bootstrap (sid + tok) ---------
  **********************************************/
+
+// JWT may arrive via URL (?tok=...) or be recovered from sessionStorage / Tableau
 let tok = new URLSearchParams(location.search).get('tok') || null;
 
+// If the WDC UI is ever hosted on a separate origin from the API server, set API_BASE accordingly.
+// Example: const API_BASE = 'https://wdc.foundation.alaska.edu';
 const API_BASE = '';
 
 const urlParams = new URLSearchParams(location.search);
@@ -12,41 +33,66 @@ const urlSid = urlParams.get('sid') || null;
 const SID_KEY = 'bb_sid';
 let sid = sessionStorage.getItem(SID_KEY);
 
+// Detect whether this page is running inside Tableau Desktop's WDC runtime
 const HAS_TABLEAU = typeof window !== 'undefined' && typeof window.tableau !== 'undefined';
 
-// If a sid is in the URL, that overrides everything (this is how Desktop passes its sid to Chrome)
+/**
+ * If a sid is in the URL, that overrides everything.
+ * This is how Desktop hands its sid into an external browser window:
+ *   - Desktop opens Chrome with /wdc.html?sid=...
+ *   - This script stores that sid in sessionStorage
+ */
 if (urlSid) {
   sid = urlSid;
   sessionStorage.setItem(SID_KEY, sid);
-  // strip sid (and optionally tok) from the URL bar
+
+  // strip sid (and optionally tok) from the URL bar after capturing it
   const clean = new URLSearchParams(location.search);
   clean.delete('sid');
+
   // keep tok in the URL only long enough to stash it; bootstrapToken() already removes it later
   history.replaceState(null, '', `${location.pathname}${clean.toString() ? `?${clean}` : ''}`);
 }
 
-// If still no sid, generate one
+// If still no sid, generate one (this supports "normal browser only" usage too)
 if (!sid) {
   sid = (crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
   sessionStorage.setItem(SID_KEY, sid);
 }
 
-// Persist JWT across reloads and remove from URL bar
+
+/**
+ * Persist JWT across reloads and remove it from the URL bar.
+ * Sources:
+ *  1) ?tok=... in URL (external browser handoff)
+ *  2) sessionStorage.bb_jwt
+ *  3) tableau.password (Desktop persistence)
+ */
 (function bootstrapToken() {
   if (!tok) tok = sessionStorage.getItem('bb_jwt') || null;
   if (!tok && HAS_TABLEAU && typeof tableau !== 'undefined' && tableau.password) tok = tableau.password;
+
   if (tok) {
     sessionStorage.setItem('bb_jwt', tok);
+
+    // Important: don't leave JWT in the URL history or address bar
     if (location.search.includes('tok=')) {
       history.replaceState(null, '', location.pathname); // remove the token from the URL
     }
   }
 })();
 
+/***********************************************
+ *  --------- Main IIFE (UI + WDC runtime) ---------
+ **********************************************/
+
 // IIFE Function
 (function () {
 
-  // Helper Functions
+  /***********************************************
+   *  --------- Helper Functions: UI / Filters ---------
+   **********************************************/
+
   // UI update
   function updateUIWithAuthState(hasAuth) {
     if (hasAuth) {
@@ -70,16 +116,18 @@ if (!sid) {
     }
   }
 
-  // function checkAuth() {
-  //   const url = tok
-  //     ? `http://localhost:3333/status?tok=${encodeURIComponent(tok)}`
-  //     : `http://localhost:3333/status`;
+  /* Show / hide filter groups whenever the endpoint changes  */
+  function updateFilters() {
+    const ep = $('#endpointSelect').val();
+    // hide all
+    $('.filter-group').hide();
+    // show only selected group
+    $(`.filter-group[data-endpoint="${ep}"]`).show();
+  }
 
-  //   $.getJSON(url, (stat) => {
-  //     if (!tok && stat.tok) { tok = stat.tok; }  // if server minted a fresh token
-  //     updateUIWithAuthState(stat.authenticated);
-  //   });
-  // }
+  /***********************************************
+   *  --------- Helper Functions: Tableau credential hydration ---------
+   **********************************************/
 
   // Ensure SID/JWT are restored from Tableau when running inside Desktop 
   function ensureCredentialsFromTableau() {
@@ -99,7 +147,67 @@ if (!sid) {
     }
   }
 
-  // Check authentication status and update UI accordingly
+  /***********************************************
+   *  --------- Helper Functions: Auth + HTTP wrappers ---------
+   **********************************************/
+
+  /**
+   * Refresh the JWT token if needed.
+   * Server behavior:
+   *  - If  Bearer is valid, /status may return { authenticated: true, tok?: <fresh> }
+   *  - If expired/invalid, it should return authenticated:false or 401.
+   */
+  async function refreshTok() {
+    if (!tok) return false;
+
+    const stat = await fetch(`${API_BASE}/status?sid=${encodeURIComponent(sid)}`, {
+      headers: { Authorization: `Bearer ${tok}` }
+    }).then(r => r.json());
+
+    if (stat && stat.tok) {
+      tok = stat.tok;
+      sessionStorage.setItem('bb_jwt', tok);
+      $.ajaxSetup({ headers: { Authorization: `Bearer ${tok}` } });
+      return true;
+    }
+    return false;
+  }
+
+  // Authed fetch function to handle JWT and API base URL
+  function authedFetch(url, opts = {}) {
+    const headers = { ...(opts.headers || {}) };
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+
+    // If we pass an absolute URL, don't prefix with API_BASE
+    const fullUrl = /^https?:\/\//.test(url) ? url : `${API_BASE}${url}`;
+
+    // credentials:'same-origin' lets cookies flow if we ever add them later
+    return fetch(fullUrl, { credentials: 'same-origin', ...opts, headers });
+  }
+
+  // Authed JSON fetch function to handle JWT and API base URL
+  async function authedJson(url, opts) {
+    let r = await authedFetch(url, opts);
+
+    if (r.status === 401) {
+      // try to renew our short-lived JWT
+      const ok = await refreshTok();
+      if (ok) {
+        r = await authedFetch(url, opts); // retry once with fresh token
+      }
+    }
+
+    if (!r.ok) {
+      throw new Error(`${r.status} ${r.statusText} @ ${url}`);
+    }
+    return r.json();
+  }
+  
+  /**
+   * Check authentication status and update UI accordingly.
+   * - If server returns a fresh tok, we store it and configure $.ajaxSetup.
+   * - UI is toggled via updateUIWithAuthState()
+   */
   function checkAuth() {
     authedJson(`/status?sid=${encodeURIComponent(sid)}`)
       .then(stat => {
@@ -113,76 +221,11 @@ if (!sid) {
       .catch(() => updateUIWithAuthState(false));
   }
 
-  // Refresh the JWT token if needed
-  async function refreshTok() {
-    if (!tok) return false;
-    const stat = await fetch(`${API_BASE}/status?sid=${encodeURIComponent(sid)}`, {
-      headers: { Authorization: `Bearer ${tok}` }
-    }).then(r => r.json());
-    if (stat && stat.tok) {
-      tok = stat.tok;
-      sessionStorage.setItem('bb_jwt', tok);
-      $.ajaxSetup({ headers: { Authorization: `Bearer ${tok}` } });
-      return true;
-    }
-    return false;
-  }
-  // Authed fetch function to handle JWT and API base URL
-  function authedFetch(url, opts = {}) {
-    const headers = { ...(opts.headers || {}) };
-    if (tok) headers.Authorization = `Bearer ${tok}`;
-    const fullUrl = /^https?:\/\//.test(url) ? url : `${API_BASE}${url}`;
-    return fetch(fullUrl, { credentials: 'same-origin', ...opts, headers });
-  }
+  /***********************************************
+   *  --------- Mapping helpers (API -> flat rows) ---------
+   **********************************************/
 
-  // Authed JSON fetch function to handle JWT and API base URL
-  async function authedJson(url, opts) {
-    let r = await authedFetch(url, opts);
-    if (r.status === 401) {
-      // try to renew our short-lived JWT
-      const ok = await refreshTok();
-      if (ok) {
-        r = await authedFetch(url, opts); // retry once with fresh token
-      }
-    }
-    if (!r.ok) {
-      throw new Error(`${r.status} ${r.statusText} @ ${url}`);
-    }
-    return r.json();
-  }
-
-
-  /* Show / hide filter groups whenever the endpoint changes  */
-  function updateFilters() {
-    const ep = $('#endpointSelect').val();
-    // hide all
-    $('.filter-group').hide();
-    // show only selected group
-    $(`.filter-group[data-endpoint="${ep}"]`).show();
-  }
-  // Unused now - Replaced
-  // (function () {
-  //   const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
-  //   const accessToken = fragmentParams.get('access_token');
-
-  //   if (accessToken) {
-  //     sessionStorage.setItem('access_token', accessToken);
-  //   }
-
-  //   window.history.replaceState(null, '', window.location.pathname);
-
-  //   // Use the stored token if available
-  //   const token = sessionStorage.getItem('access_token');
-  //   updateUIWithAuthState(!!token);
-
-  //   // Replace the stored token if available
-  //   if (token) {
-  //     tableau.connectionData = JSON.stringify({ accessToken: token });
-  //   }
-
-  //   tableau.connectionName = "RE NXT Data"; // Give the data source a name
-  // })();
-
+  // Map Constituents object to flat rows
   function mapConstituents(item) {
     return {
       id: item.id,
@@ -278,6 +321,7 @@ if (!sid) {
     };
   }
 
+  // Map Actions object to flat rows
   function mapActions(item) {
     return {
       id: item.id,
@@ -306,6 +350,7 @@ if (!sid) {
     };
   }
 
+  // Map Gifts object to flat rows
   function mapGifts(item) {
     const out = {
       // Scalar fields
@@ -446,6 +491,7 @@ if (!sid) {
     return out;
   }
 
+  // Map Opportunities object to flat rows
   function mapOpportunities(item) {
     const out = {
       id: item.id,
@@ -461,14 +507,14 @@ if (!sid) {
       funded_amount: item.funded_amount ? item.funded_amount.value : 0,
       funded_date: item.funded_date ? new Date(item.funded_date) : null,
 
-      // // Flatten just the first fundraiser if present
+      // Flatten just the first fundraiser if present
       // fundraiser_constituent_id: firstFundraiser?.constituent_id ?? null,
       // fundraiser_credit_amount: firstFundraiser?.credit_amount?.value ?? null,
 
       fund_id: item.fund_id,
       inactive: item.inactive,
 
-      // // Flatten just the first linked gift in the array if present
+      // Flatten just the first linked gift in the array if present
       // first_linked_gift: firstGift,
 
       name: item.name,
@@ -513,6 +559,7 @@ if (!sid) {
     return out;
   }
 
+  // Map Events object to flat rows
   function mapEvents(item) {
     return {
       id: item.id,
@@ -545,6 +592,7 @@ if (!sid) {
     };
   }
 
+  // Map Funds object to flat rows
   function mapFunds(item) {
     return {
       id: item.id,
@@ -561,6 +609,7 @@ if (!sid) {
     };
   }
 
+  // Map Campaigns object to flat rows
   function mapCampaigns(item) {
     return {
       id: item.id,
@@ -576,6 +625,7 @@ if (!sid) {
     };
   }
 
+  // Map Appeals object to flat rows
   function mapAppeals(item) {
     return {
       id: item.id,
@@ -591,6 +641,16 @@ if (!sid) {
     };
   }
 
+  /***********************************************
+   *  --------- Build connectionData + submit ---------
+   **********************************************/
+
+  /**
+   * Collects all UI form values and stores them into tableau.connectionData.
+   * Also persists:
+   *  - tableau.username = sid
+   *  - tableau.password = tok
+   */
   function buildCfgAndSubmit() {
 
     // Gather every input from the form
@@ -643,6 +703,7 @@ if (!sid) {
     };
 
     cfg.sid = sid;
+
     tableau.connectionData = JSON.stringify(cfg);
     tableau.username = sid;
     if (tok) tableau.password = tok;
@@ -656,11 +717,14 @@ if (!sid) {
   **********************************************/
   $(document).ready(function () {
     ensureCredentialsFromTableau();
+
     // Query the server for authentication status.
+    // NOTE: tableau.init() exists in Desktop; safe-guarded here.
     if (HAS_TABLEAU && typeof tableau.init === 'function') {
       try { tableau.init(); } catch (e) { console.warn('tableau.init failed', e); }
     }
 
+    // If we already have a JWT, configure jQuery AJAX for legacy $.getJSON / etc.
     if (tok) {
       $.ajaxSetup({
         headers: { Authorization: `Bearer ${tok}` }
@@ -671,6 +735,7 @@ if (!sid) {
     const ext = document.getElementById('externalAuth'); // e.g. "Sign in using external browser"
     if (ext) ext.href = `/auth?sid=${encodeURIComponent(sid)}`;
 
+    // Construct a link that will reopen the connector in Desktop with sid (+ optional tok)
     const openDesktop = document.getElementById('openInDesktop'); // e.g. "Open in Tableau Desktop"
     if (openDesktop) {
       const qp = new URLSearchParams();
@@ -679,7 +744,7 @@ if (!sid) {
       openDesktop.href = `/wdc.html?${qp.toString()}`;
     }
 
-
+    // Pull current auth state from server; toggles UI accordingly
     checkAuth();
 
     // Dynamically Update displayed filters based on selected endpoint
@@ -698,12 +763,15 @@ if (!sid) {
     // Connect button: instruct the user to authenticate if not done.
     $("#connectLink").on('click', (e) => {
       const authUrl = `/auth?sid=${encodeURIComponent(sid)}`;
+
+      // NOTE: This line is intentionally left as-is (existing behavior).
+      // If we have odd URLs in dev, revisit how abs is constructed.
       // use absolute HTTP to avoid any accidental HTTPS rewrite showing up in dev
       const abs = `http://${location.origin}${authUrl}`;
+
       e.preventDefault();
       window.location.assign(abs);
     });
-
 
     // Get Data button triggers the WDC flow
     $("#getDataButton").on('click', buildCfgAndSubmit);
@@ -716,7 +784,9 @@ if (!sid) {
     // Define the WDC
     const myConnector = tableau.makeConnector();
 
-    // Define Table Schemas
+    /***********************************************
+     *  --- Schema Discovery ---
+     **********************************************/
     myConnector.getSchema = function (schemaCallback) {
       ensureCredentialsFromTableau();
 
@@ -1210,14 +1280,17 @@ if (!sid) {
       }
     };
 
-    // Retrieve Table Data
+    /***********************************************
+     *  --- Data Gathering ---
+     **********************************************/
     myConnector.getData = function (table, doneCallback) {
       console.log('WDC phase:', tableau.phase);
       ensureCredentialsFromTableau();
-      authedFetch(`/status?sid=${encodeURIComponent(sid)}`).catch(()=>{});
-      // Extract the Tableau run phase - unused
-      //const isGather = tableau.phase === tableau.phaseEnum.gatherDataPhase;
 
+      // Opportunistic keepalive/status check (does not block data flow)
+      authedFetch(`/status?sid=${encodeURIComponent(sid)}`).catch(()=>{});
+
+      // Tableau may call getData in interactive phase (preview); skip heavy work there.
       if (tableau.phase === tableau.phaseEnum.interactivePhase) {
         doneCallback();
         return;
@@ -1229,8 +1302,10 @@ if (!sid) {
 
       // Determine which table the WDC is currently asking for
       const tableId = table.tableInfo.id;
+
       // Call the server route /getBlackbaudData with parameters
       let url = `/getBlackbaudData?endpoint=${encodeURIComponent(tableId)}`;
+
       // add user typed parameters
       if (cfg.recordId) url += `&id=${cfg.recordId}`;
       if (cfg.queryId) url += `&query_id=${cfg.queryId}`;
@@ -1401,7 +1476,7 @@ if (!sid) {
         authedJson(url)                              // url already has limit/offset/filters
           .then(data => {
             const rows = data.value.map(mapActions);
-            const MAX_ROWS = 10000;             // avoid 64 k row burst limits
+            const MAX_ROWS = 10000;                  // avoid 64 k row burst limits
 
             for (let i = 0; i < rows.length; i += MAX_ROWS) {
               table.appendRows(rows.slice(i, i + MAX_ROWS));
@@ -1508,96 +1583,6 @@ if (!sid) {
           .catch(e => tableau.abortWithError(e));
         return;
       }
-
-      // // Single-page fetch for static tables [Now unused and duplicate]
-      // else if (tableId === 'constituents') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapConstituents);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'actions') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapActions);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'gifts') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapGifts);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'opportunities') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapOpportunities);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'events') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapEvents);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'funds') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapFunds);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'campaigns') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapCampaigns);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
-      // else if (tableId === 'appeals') {
-      //   fetch(url)
-      //     .then(r => r.json())
-      //     .then(data => {
-      //       const rows = data.value.map(mapAppeals);
-      //       table.appendRows(rows);
-      //       doneCallback();
-      //     })
-      //     .catch(e => tableau.abortWithError(e));
-      //   return;
-      // }
     };
 
     tableau.registerConnector(myConnector);
