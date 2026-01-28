@@ -52,18 +52,18 @@ const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
 
 // App runtime
 const config = {
-  PORT: process.env.PORT || 3333,
-  HOSTPATH: process.env.HOSTPATH || 'http://localhost',
+  PORT: Number(process.env.PORT || 3333),
+  HOST: process.env.HOST || 'localhost',
   REDIRECT_PATH: process.env.REDIRECT_PATH || '/redirect',
   HTTP_TIMEOUT_MS: parseInt(process.env.HTTP_TIMEOUT_MS || '30000', 10), 
   HTTP_MAX_WAIT_MS: parseInt(process.env.HTTP_MAX_WAIT_MS || '120000', 10)
 };
 
-const redirectURI = 
-  process.env.REDIRECT_URI || 
-  (config.PUBLIC_BASE_URL 
-    ? `${config.PUBLIC_BASE_URL}${config.REDIRECT_PATH}` 
-    : `${config.HOSTPATH}:${config.PORT}${config.REDIRECT_PATH}`);
+const redirectURI =
+  process.env.REDIRECT_URI ||
+  (PUBLIC_BASE_URL
+    ? `${PUBLIC_BASE_URL}${config.REDIRECT_PATH}`
+    : `http://${config.HOST}:${config.PORT}${config.REDIRECT_PATH}`);
 
 // Blackbaud OAuth + API
 const clientID = process.env.CLIENT_ID;
@@ -159,7 +159,7 @@ app.use(helmet({
 }));
 
 // Static WDC UI + assets
-app.use(express.static(path.join(__dirname + 'public'), {
+app.use(express.static(path.join(__dirname, 'public'), {
   maxAge: process.env.NODE_ENV === 'production' ? '5m' : 0,
   etag: true
 }));

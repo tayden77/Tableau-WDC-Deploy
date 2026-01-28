@@ -762,14 +762,12 @@ if (!sid) {
 
     // Connect button: instruct the user to authenticate if not done.
     $("#connectLink").on('click', (e) => {
-      const authUrl = `/auth?sid=${encodeURIComponent(sid)}`;
+      e.preventDefault();
 
       // NOTE: This line is intentionally left as-is (existing behavior).
       // If we have odd URLs in dev, revisit how abs is constructed.
       // use absolute HTTP to avoid any accidental HTTPS rewrite showing up in dev
-      const abs = `http://${location.origin}${authUrl}`;
-
-      e.preventDefault();
+      const abs = new URL(`/auth?sid=${encodeURIComponent(sid)}`, location.origin).toString();
       window.location.assign(abs);
     });
 
