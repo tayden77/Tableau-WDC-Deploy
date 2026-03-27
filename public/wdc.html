@@ -3,353 +3,344 @@
 
 <head>
   <meta charset="utf-8">
-  <title>Raiser's Edge Connector</title>
+  <title>RE NXT Data Connector</title>
   <meta http-equiv="Cache-Control" content="no-store" />
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <!-- Bootstrap 5 CSS -->
   <link rel="stylesheet" href="/vendor/bootstrap-5.3.3.min.css" />
-
-  <!-- jQuery (needed for your WDC JS if you use it) -->
-  <script src="/vendor/jquery-3.6.0.min.js"></script>
-
-  <!-- Bootstrap 5 JS bundle -->
+  <link rel="stylesheet" href="/css/wdc.css" />
   <script src="/vendor/bootstrap.bundle-5.3.3.min.js"></script>
-
-  <!-- Tableau WDC library -->
   <script src="/vendor/tableauwdc-2.2.0.js"></script>
 
-  <!-- Cookie helper (optional; keep if you still use it elsewhere) -->
-  <script src="/vendor/js.cookie-2.0.2.min.js"></script>
-
-  <!-- Your WDC code -->
+  <!-- Schema + mapper modules -->
+  <script src="/js/schemas/constituents.js"></script>
+  <script src="/js/schemas/actions.js"></script>
+  <script src="/js/schemas/gifts.js"></script>
+  <script src="/js/schemas/opportunities.js"></script>
+  <script src="/js/schemas/events.js"></script>
+  <script src="/js/schemas/simple.js"></script>
+  <script src="/js/mappers.js"></script>
   <script src="/wdc.js"></script>
-
-  <style>
-    .signedin { display: none; }
-    #mainSection { display: none; }
-  </style>
 </head>
 
 <body>
-  <!-- ===== AUTH SECTION (always visible until signed in) ===== -->
-  <div id="authSection" class="text-center my-5">
-    <p class="signedin mb-3">You are signed in! You can now open this connector in Tableau Desktop.</p>
-
-    <p class="notsignedin mb-3">
-      You are not signed in. If Tableau’s embedded browser won’t complete login,
-      open a regular browser window and click Connect below.
-      After authenticating, come back here and click “Open in Tableau Desktop”.
-    </p>
-
-    <div class="d-flex justify-content-center gap-2 flex-wrap">
-      <!-- Keep this ID because wdc.js currently toggles & binds click handler to #connectLink -->
-      <a id="connectLink" class="btn btn-primary" href="/auth">Connect to Blackbaud</a>
-
-      <!-- wdc.js will populate this href when present -->
-      <a id="openInDesktop" class="btn btn-success signedin" href="/wdc.html">
-        Open in Tableau Desktop
-      </a>
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="brand">
+      <div class="brand-icon">RE</div>
+      <span>RE NXT Data Connector</span>
+    </div>
+    <div>
+      <span id="statusPill" class="status-pill disconnected">Disconnected</span>
     </div>
   </div>
 
-  <!-- ===== MAIN SECTION ===== -->
-  <div id="mainSection" style="display: none;">
-    <div class="container">
-      <!-- Row 1: Data Selection -->
-      <div class="row">
-        <!-- Column 1: Endpoint selector -->
-        <div class="col-md-4 mb-3">
-          <h5>Data Selection</h5>
-          <div class="mb-2">
-            <label for="endpointSelect" class="form-label">Endpoint</label>
-            <select id="endpointSelect" class="form-select">
-              <option value="constituents">Constituents</option>
-              <option value="actions">Actions</option>
-              <option value="gifts">Gifts</option>
-              <option value="funds">Funds</option>
-              <option value="opportunities">Opportunities</option>
-              <option value="events">Events</option>
-              <option value="campaigns">Campaigns</option>
-              <option value="appeals">Appeals</option>
-              <option value="query">Dynamic Query</option>
-            </select>
-          </div>
-        </div>
+  <!-- Auth Card (shown when not authenticated) -->
+  <div id="authSection">
+    <div class="auth-card notsignedin">
+      <h2>Connect to Blackbaud</h2>
+      <p>
+        Authenticate with your Blackbaud account to pull data from
+        Raiser's Edge NXT into Tableau.
+      </p>
+      <a id="connectLink" class="btn-connect" href="/auth">Sign In with Blackbaud</a>
+    </div>
 
-        <!-- Column 2: Accordion options -->
-        <div class="col-md-4 mb-3">
-          <h5>Options</h5>
-          <div class="accordion" id="wdcOptions">
-            <!-- Single record -->
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="headingOne">
-                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne"
-                  aria-expanded="true" aria-controls="collapseOne">
-                  Single Record Selection
-                </button>
-              </h2>
-              <div id="collapseOne" class="accordion-collapse collapse show" aria-labelledby="headingOne"
-                data-bs-parent="#wdcOptions">
-                <div class="accordion-body">
-                  <label for="recordIdInput" class="form-label">Record ID (optional)</label>
-                  <input type="text" id="recordIdInput" class="form-control" placeholder="e.g. 123" />
-                </div>
-              </div>
+    <div class="auth-card signedin">
+      <h2>Connected</h2>
+      <p>
+        Your Blackbaud session is active. If you are not already in Tableau,
+        open Tableau Desktop and add this URL as a Web Data Connector.
+        Configure your data pull below.
+      </p>
+    </div>
+  </div>
+
+  <!-- Main Configuration Section -->
+  <div id="mainSection">
+    <div class="app-container">
+      <div class="main-grid">
+
+        <!-- LEFT COLUMN: Selection + Options -->
+        <div>
+          <!-- Endpoint Selection -->
+          <div class="config-card">
+            <h3>Data Source</h3>
+            <div class="mb-2">
+              <label for="endpointSelect" class="form-label">Endpoint</label>
+              <select id="endpointSelect" class="form-select" aria-label="Select data endpoint">
+                <option value="constituents">Constituents</option>
+                <option value="actions">Actions</option>
+                <option value="gifts">Gifts</option>
+                <option value="funds">Funds</option>
+                <option value="opportunities">Opportunities</option>
+                <option value="events">Events</option>
+                <option value="campaigns">Campaigns</option>
+                <option value="appeals">Appeals</option>
+                <option value="query">Dynamic Query</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Record Selection -->
+          <div class="config-card">
+            <h3>Record Selection</h3>
+
+            <!-- Single Record -->
+            <div class="mb-3">
+              <label for="recordIdInput" class="form-label">Single Record ID</label>
+              <input type="text" id="recordIdInput" class="form-control" placeholder="Leave blank for all records" />
+              <div class="text-hint">Enter an ID to fetch one specific record</div>
             </div>
 
-            <!-- Multi-record -->
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="headingTwo">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
-                  Multi-Record Selection
-                </button>
-              </h2>
-              <div id="collapseTwo" class="accordion-collapse collapse" aria-labelledby="headingTwo"
-                data-bs-parent="#wdcOptions">
-                <div class="accordion-body">
-                  <div class="mb-2">
-                    <label for="maxPagesInput" class="form-label">Number of Pages (Optional)</label>
-                    <input type="number" id="maxPagesInput" class="form-control" placeholder="Default 1 Page" />
-                  </div>
-                  <div class="mb-2">
-                    <label for="limitInput" class="form-label">Records Per Page (Optional)</label>
-                    <input type="number" id="limitInput" class="form-control" placeholder="Default 500 (Max 5000)" />
-                  </div>
-                  <div class="mb-2">
-                    <label for="offsetInput" class="form-label">Offset (Optional)</label>
-                    <input type="number" id="offsetInput" class="form-control" placeholder="Default 0" />
-                  </div>
+            <div class="divider"></div>
 
-                  <!-- NEW: chunk size used by bulk/chunk endpoints in wdc.js -->
-                  <div class="mb-2">
-                    <label for="chunkSizeInput" class="form-label">Chunk Size (Bulk mode)</label>
-                    <input type="number" id="chunkSizeInput" class="form-control" placeholder="Default 15000" />
-                  </div>
+            <!-- Dynamic Query -->
+            <div class="mb-3">
+              <label for="queryIdInput" class="form-label">Dynamic Query ID</label>
+              <input type="text" id="queryIdInput" class="form-control" placeholder="RE NXT query ID" />
+              <div class="text-hint">Runs a saved RE NXT query and returns CSV results</div>
+            </div>
 
-                  <div class="form-check">
+            <div class="divider"></div>
+
+            <!-- Pagination -->
+            <div
+              class="collapse-trigger"
+              data-bs-toggle="collapse"
+              data-bs-target="#paginationOptions"
+              aria-expanded="false"
+              aria-controls="paginationOptions"
+            >
+              <span class="form-label mb-0">Pagination Options</span>
+            </div>
+            <div class="collapse" id="paginationOptions">
+              <div class="filter-grid mt-2">
+                <div>
+                  <label for="maxPagesInput" class="form-label">Pages</label>
+                  <input type="number" id="maxPagesInput" class="form-control" placeholder="1" />
+                </div>
+                <div>
+                  <label for="limitInput" class="form-label">Per Page</label>
+                  <input type="number" id="limitInput" class="form-control" placeholder="500" />
+                </div>
+                <div>
+                  <label for="offsetInput" class="form-label">Offset</label>
+                  <input type="number" id="offsetInput" class="form-control" placeholder="0" />
+                </div>
+                <div>
+                  <label for="chunkSizeInput" class="form-label">Chunk Size</label>
+                  <input type="number" id="chunkSizeInput" class="form-control" placeholder="15000" />
+                </div>
+                <div class="full-width">
+                  <div class="form-check mt-1">
                     <input class="form-check-input" type="checkbox" id="fetchAllRecords" />
                     <label class="form-check-label" for="fetchAllRecords">
-                      Fetch all records (ignore limit/offset)
+                      Fetch all records (bulk mode)
                     </label>
                   </div>
-                  <label for="note" class="form-label">
-                    Note: 2 pages of 500 records per page would be a limit of 1000 records
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <!-- Query -->
-            <div class="accordion-item">
-              <h2 class="accordion-header" id="headingThree">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
-                  Dynamic Query
-                </button>
-              </h2>
-              <div id="collapseThree" class="accordion-collapse collapse" aria-labelledby="headingThree"
-                data-bs-parent="#wdcOptions">
-                <div class="accordion-body">
-                  <label for="queryIdInput" class="form-label">Query ID</label>
-                  <input type="text" id="queryIdInput" class="form-control" placeholder="e.g. 1234" />
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Column 3: Filters -->
-        <div class="col-md-4 mb-3">
-          <h5>Filters</h5>
+        <!-- RIGHT COLUMN: Filters -->
+        <div>
+          <div class="config-card" id="filtersCard">
+            <h3>Filters</h3>
 
-          <!-- Constituents Endpoint Filters -->
-          <div class="filter-group" data-endpoint="constituents" style="display:none">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="includeInactiveConstituents" />
-              <label class="form-check-label" for="includeInactiveConstituents">
-                Include Inactive Records?
-              </label>
+            <!-- Constituents -->
+            <div class="filter-group" data-endpoint="constituents">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="includeInactive_constituents" />
+                <label class="form-check-label" for="includeInactive_constituents">Include inactive records</label>
+              </div>
             </div>
+
+            <!-- Actions -->
+            <div class="filter-group" data-endpoint="actions">
+              <div class="filter-grid">
+                <div>
+                  <label for="dateAddedInput" class="form-label">Date Added</label>
+                  <input type="date" id="dateAddedInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="lastModifiedInput" class="form-label">Last Modified</label>
+                  <input type="date" id="lastModifiedInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="statusCodeInput" class="form-label">Status Code</label>
+                  <input type="text" id="statusCodeInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="listId_actions" class="form-label">List ID</label>
+                  <input type="text" id="listId_actions" class="form-control" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Gifts -->
+            <div class="filter-group" data-endpoint="gifts">
+              <div class="filter-grid">
+                <div>
+                  <label for="constituentIdInput" class="form-label">Constituent ID</label>
+                  <input type="text" id="constituentIdInput" class="form-control" placeholder="e.g. 395973" />
+                </div>
+                <div>
+                  <label for="postStatusInput" class="form-label">Post Status</label>
+                  <input type="text" id="postStatusInput" class="form-control" placeholder="e.g. Posted" />
+                </div>
+                <div>
+                  <label for="giftTypeInput" class="form-label">Gift Type</label>
+                  <input type="text" id="giftTypeInput" class="form-control" placeholder="e.g. Donation" />
+                </div>
+                <div>
+                  <label for="receiptStatusInput" class="form-label">Receipt Status</label>
+                  <input type="text" id="receiptStatusInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="acknowledgementStatusInput" class="form-label">Acknowledgement Status</label>
+                  <input type="text" id="acknowledgementStatusInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="campaignIdInput" class="form-label">Campaign ID</label>
+                  <input type="text" id="campaignIdInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="fundIdInput" class="form-label">Fund ID</label>
+                  <input type="text" id="fundIdInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="appealIdInput" class="form-label">Appeal ID</label>
+                  <input type="text" id="appealIdInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="startGiftDateInput" class="form-label">Start Gift Date</label>
+                  <input type="date" id="startGiftDateInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="endGiftDateInput" class="form-label">End Gift Date</label>
+                  <input type="date" id="endGiftDateInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="startGiftAmountInput" class="form-label">Start Amount</label>
+                  <input type="number" id="startGiftAmountInput" class="form-control" step="0.01" placeholder="0.00" />
+                </div>
+                <div>
+                  <label for="endGiftAmountInput" class="form-label">End Amount</label>
+                  <input type="number" id="endGiftAmountInput" class="form-control" step="0.01" placeholder="0.00" />
+                </div>
+                <div>
+                  <label for="listId_gifts" class="form-label">List ID</label>
+                  <input type="text" id="listId_gifts" class="form-control" />
+                </div>
+                <div>
+                  <label for="sortInput" class="form-label">Sort</label>
+                  <input type="text" id="sortInput" class="form-control" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Funds -->
+            <div class="filter-group" data-endpoint="funds">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="includeInactive_funds" />
+                <label class="form-check-label" for="includeInactive_funds">Include inactive records</label>
+              </div>
+            </div>
+
+            <!-- Campaigns -->
+            <div class="filter-group" data-endpoint="campaigns">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="includeInactive_campaigns" />
+                <label class="form-check-label" for="includeInactive_campaigns">Include inactive records</label>
+              </div>
+            </div>
+
+            <!-- Appeals -->
+            <div class="filter-group" data-endpoint="appeals">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="includeInactive_appeals" />
+                <label class="form-check-label" for="includeInactive_appeals">Include inactive records</label>
+              </div>
+            </div>
+
+            <!-- Opportunities -->
+            <div class="filter-group" data-endpoint="opportunities">
+              <div class="filter-grid">
+                <div>
+                  <label for="searchTextInput" class="form-label">Search Text</label>
+                  <input type="text" id="searchTextInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="listId_opportunities" class="form-label">List ID</label>
+                  <input type="text" id="listId_opportunities" class="form-control" />
+                </div>
+                <div class="full-width">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="includeInactive_opportunities" />
+                    <label class="form-check-label" for="includeInactive_opportunities">Include inactive records</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Events -->
+            <div class="filter-group" data-endpoint="events">
+              <div class="filter-grid">
+                <div>
+                  <label for="nameInput" class="form-label">Name</label>
+                  <input type="text" id="nameInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="lookupIdInput" class="form-label">Lookup ID</label>
+                  <input type="text" id="lookupIdInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="categoryInput" class="form-label">Category</label>
+                  <input type="text" id="categoryInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="eventIdInput" class="form-label">Event ID</label>
+                  <input type="text" id="eventIdInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="startDateFromInput" class="form-label">Start Date From</label>
+                  <input type="date" id="startDateFromInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="startDateToInput" class="form-label">Start Date To</label>
+                  <input type="date" id="startDateToInput" class="form-control" />
+                </div>
+                <div>
+                  <label for="groupInput" class="form-label">Group</label>
+                  <input type="text" id="groupInput" class="form-control" />
+                </div>
+                <div>
+                  <div class="form-check mt-4">
+                    <input class="form-check-input" type="checkbox" id="includeInactive_events" />
+                    <label class="form-check-label" for="includeInactive_events">Include inactive</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Dynamic Query (no filters) -->
+            <div class="filter-group" data-endpoint="query">
+              <p class="text-hint mb-0">No additional filters for dynamic queries. Configure the query ID in Record Selection.</p>
+            </div>
+
           </div>
 
-          <!-- Actions Endpoint Filters -->
-          <div class="filter-group" data-endpoint="actions" style="display:none">
-            <div class="mb-2">
-              <label for="dateAddedInput" class="form-label">Date Added</label>
-              <input type="text" id="dateAddedInput" class="form-control" placeholder="YYYY-MM-DD" />
-            </div>
-            <div class="mb-2">
-              <label for="lastModifiedInput" class="form-label">Last Modified</label>
-              <input type="text" id="lastModifiedInput" class="form-control" placeholder="YYYY-MM-DD" />
-            </div>
-            <div class="mb-2">
-              <label for="statusCodeInput" class="form-label">Status Code</label>
-              <input type="text" id="statusCodeInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="listIdInput" class="form-label">List ID</label>
-              <input type="text" id="listIdInput" class="form-control" />
-            </div>
+          <!-- Get Data -->
+          <div class="text-center mt-3">
+            <button id="getDataButton" class="btn-get-data">
+              Get Data
+            </button>
           </div>
-
-          <!-- Gifts Endpoint Filters -->
-          <div class="filter-group" data-endpoint="gifts" style="display:none">
-            <div class="mb-2">
-              <label for="constituentIdInput" class="form-label">Constituent ID</label>
-              <input type="text" id="constituentIdInput" class="form-control" placeholder="E.G. 395973" />
-            </div>
-            <div class="mb-2">
-              <label for="postStatusInput" class="form-label">Post Status</label>
-              <input type="text" id="postStatusInput" class="form-control" placeholder="E.G. Posted, DoNotPost" />
-            </div>
-            <div class="mb-2">
-              <label for="giftTypeInput" class="form-label">Gift Type</label>
-              <input type="text" id="giftTypeInput" class="form-control" placeholder="E.G. Donation, GiftInKind" />
-            </div>
-            <div class="mb-2">
-              <label for="receiptStatusInput" class="form-label">Receipt Status</label>
-              <input type="text" id="receiptStatusInput" class="form-control" placeholder="Unused?" />
-            </div>
-            <div class="mb-2">
-              <label for="acknowledgementStatusInput" class="form-label">Acknowledgement Status</label>
-              <input type="text" id="acknowledgementStatusInput" class="form-control" placeholder="Unused?" />
-            </div>
-            <div class="mb-2">
-              <label for="campaignIdInput" class="form-label">Campaign ID</label>
-              <input type="text" id="campaignIdInput" class="form-control" placeholder="outside of this table" />
-            </div>
-            <div class="mb-2">
-              <label for="fundIdInput" class="form-label">Fund ID</label>
-              <input type="text" id="fundIdInput" class="form-control" placeholder="outside of this table" />
-            </div>
-            <div class="mb-2">
-              <label for="appealIdInput" class="form-label">Appeal ID</label>
-              <input type="text" id="appealIdInput" class="form-control" placeholder="outside of this table" />
-            </div>
-            <div class="mb-2">
-              <label for="startGiftDateInput" class="form-label">Start Gift Date</label>
-              <input type="text" id="startGiftDateInput" class="form-control" placeholder="YYYY-MM-DD" />
-            </div>
-            <div class="mb-2">
-              <label for="endGiftDateInput" class="form-label">End Gift Date</label>
-              <input type="text" id="endGiftDateInput" class="form-control" placeholder="YYYY-MM-DD" />
-            </div>
-            <div class="mb-2">
-              <label for="startGiftAmountInput" class="form-label">Start Gift Amount</label>
-              <input type="text" id="startGiftAmountInput" class="form-control" placeholder="E.G. 1234.56" />
-            </div>
-            <div class="mb-2">
-              <label for="endGiftAmountInput" class="form-label">End Gift Amount</label>
-              <input type="text" id="endGiftAmountInput" class="form-control" placeholder="E.G. 1234.56" />
-            </div>
-            <div class="mb-2">
-              <label for="listIdInput" class="form-label">List ID</label>
-              <input type="text" id="listIdInput" class="form-control" placeholder="?outside of this table?" />
-            </div>
-            <div class="mb-2">
-              <label for="sortInput" class="form-label">Sort</label>
-              <input type="text" id="sortInput" class="form-control" placeholder="?outside of this table?" />
-            </div>
-          </div>
-
-          <!-- Funds Endpoint Filters -->
-          <div class="filter-group" data-endpoint="funds" style="display:none">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="includeInactiveFunds" />
-              <label class="form-check-label" for="includeInactiveFunds">
-                Include Inactive Records?
-              </label>
-            </div>
-          </div>
-
-          <!-- Campaigns Endpoint Filters -->
-          <div class="filter-group" data-endpoint="campaigns" style="display:none">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="includeInactiveCampaigns" />
-              <label class="form-check-label" for="includeInactiveCampaigns">
-                Include Inactive Records?
-              </label>
-            </div>
-          </div>
-
-          <!-- Appeals Endpoint Filters -->
-          <div class="filter-group" data-endpoint="appeals" style="display:none">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="includeInactiveAppeals" />
-              <label class="form-check-label" for="includeInactiveAppeals">
-                Include Inactive Records?
-              </label>
-            </div>
-          </div>
-
-          <!-- Opportunity Endpoint Filters -->
-          <div class="filter-group" data-endpoint="opportunities" style="display:none">
-            <div class="mb-2">
-              <label for="searchTextInput" class="form-label">Search Text</label>
-              <input type="text" id="searchTextInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="listIdInput" class="form-label">List ID</label>
-              <input type="text" id="listIdInput" class="form-control" />
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="includeInactiveOpportunities" />
-              <label class="form-check-label" for="includeInactiveOpportunities">
-                Include Inactive Records?
-              </label>
-            </div>
-          </div>
-
-          <!-- Events Endpoint Filters -->
-          <div class="filter-group" data-endpoint="events" style="display:none">
-            <div class="mb-2">
-              <label for="nameInput" class="form-label">Name</label>
-              <input type="text" id="nameInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="lookupIdInput" class="form-label">Lookup ID</label>
-              <input type="text" id="lookupIdInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="categoryInput" class="form-label">Category</label>
-              <input type="text" id="categoryInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="eventIdInput" class="form-label">Event ID</label>
-              <input type="text" id="eventIdInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="startDateFromInput" class="form-label">Start Date From</label>
-              <input type="text" id="startDateFromInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="startDateToInput" class="form-label">Start Date To</label>
-              <input type="text" id="startDateToInput" class="form-control" />
-            </div>
-            <div class="mb-2">
-              <label for="groupInput" class="form-label">Group</label>
-              <input type="text" id="groupInput" class="form-control" />
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="includeInactiveEvents" />
-              <label class="form-check-label" for="includeInactiveEvents">
-                Include Inactive Records?
-              </label>
-            </div>
-          </div>
-
         </div>
-      </div>
 
-      <!-- Row 2: Get Data -->
-      <div class="row mt-4">
-        <div class="col text-center">
-          <button id="getDataButton" class="btn btn-success btn-lg">
-            Get Data
-          </button>
-        </div>
       </div>
     </div>
   </div>

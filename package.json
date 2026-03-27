@@ -1,33 +1,33 @@
 {
   "name": "tableau-wdc-renxt",
-  "description": "This is a Tableau Web Data Connector for the Raiser's Edge NXT SKY API",
-  "version": "0.0.1",
+  "description": "Tableau Web Data Connector for the Raiser's Edge NXT SKY API",
+  "version": "1.0.0",
   "author": "Hayden Riebe",
-  "contributors": [],
   "license": "MIT",
-  "repository": "",
-  "homepage": "",
-  "keywords": [],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write 'src/**/*.js' 'public/**/*.js' 'public/**/*.html'"
+  },
   "dependencies": {
     "cors": "^2.8.5",
-    "csurf": "^1.11.0",
     "csv-parse": "^5.6.0",
     "csv-stringify": "^6.5.2",
     "dotenv": "^16.6.1",
-    "express": "~4.13.*",
+    "express": "^4.21.0",
     "express-rate-limit": "^6.11.2",
     "helmet": "^7.2.0",
     "ioredis": "^5.7.0",
     "jsonwebtoken": "^9.0.2",
     "undici": "^5.28.4",
-    "uuid": "^11.1.0",
-    "zod": "^3.25.76"
+    "uuid": "^11.1.0"
   },
-  "engines": {
-    "node": ">=20.0.0"
-  },
-  "files": [],
-  "scripts": {
-    "start": "node app.js"
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0"
   }
 }
